@@ -1,6 +1,6 @@
 ---
 # Runs on: pgdb0x-<env> (driven from the workstation)
-#   ansible-playbook $INV $VAULT playbooks/validate.yml                     read-only checks
+#   ansible-playbook $INV $VAULT playbooks/validate.yml                     read-only checks (+ Proxmox HA via the API, from the workstation)
 #   ansible-playbook $INV $VAULT playbooks/validate.yml --tags disruptive   switchover, leader failure, VIP move
 - name: Preflight
   ansible.builtin.import_playbook: preflight.yml
@@ -227,6 +227,64 @@
                      + (validate_cluster_results | dict2items | rejectattr('value') | map(attribute='key') | list) }}
         success_msg: All checks passed
         quiet: true
+
+- name: Validate Proxmox HA (read-only)
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tags: [readonly]
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    validate_pve_api: "https://{{ pve_api_host }}:8006/api2/json"
+  tasks:
+    - name: Proxmox HA checks
+      when: pve_ha_enabled | bool
+      block:
+        - name: Read HA status and rules from the Proxmox API
+          ansible.builtin.uri:
+            url: "{{ validate_pve_api }}/cluster/ha/{{ item }}"
+            headers:
+              Authorization: "PVEAPIToken={{ pve_api_token_id }}={{ pve_api_token_secret }}"
+            validate_certs: "{{ pve_api_validate_certs }}"
+          loop: [status/current, rules]
+          register: validate_ha_api
+          no_log: true    # the request carries the token secret
+
+        # Healthy cluster: every VM is HA-managed, started, back on its home node, with its node-affinity rule.
+        # A VM on another node means its home node is down or failback has not finished yet.
+        - name: Evaluate HA checks per VM
+          ansible.builtin.set_fact:
+            validate_ha_results: >-
+              {{ validate_ha_results | default({}) | combine({
+                   item ~ ' ha_managed': validate_ha_svc | length == 1,
+                   item ~ ' ha_started': (validate_ha_svc | map(attribute='state') | first | default('')) == 'started',
+                   item ~ ' ha_on_home_node': (validate_ha_svc | map(attribute='node') | first | default('')) == hostvars[item].vm_pve_node,
+                   item ~ ' ha_rule_home_node': validate_ha_rule | length == 1
+                     and validate_ha_rule[0].type == 'node-affinity'
+                     and validate_ha_rule[0].resources | default('') == 'vm:' ~ hostvars[item].vm_id
+                     and hostvars[item].vm_pve_node in (validate_ha_rule[0].nodes | default('')).split(',')
+                                                      | map('regex_replace', ':.*$', '') | list
+                     and not (validate_ha_rule[0].strict | default(0) | int | bool)
+                     and not (validate_ha_rule[0].disable | default(0) | int | bool)}) }}
+          vars:
+            validate_ha_svc: >-
+              {{ validate_ha_api.results[0].json.data | selectattr('type', 'equalto', 'service')
+                 | selectattr('sid', 'equalto', 'vm:' ~ hostvars[item].vm_id) | list }}
+            validate_ha_rule: >-
+              {{ validate_ha_api.results[1].json.data | selectattr('rule', 'equalto', 'pgc-' ~ item ~ '-home') | list }}
+          loop: "{{ groups['pg_nodes'] }}"
+
+        - name: Report Proxmox HA
+          ansible.builtin.debug:
+            msg: "{{ validate_ha_results }}"
+
+        - name: All Proxmox HA checks passed
+          ansible.builtin.assert:
+            that:
+              - validate_ha_results.values() | reject | list | length == 0
+            fail_msg: "Failed: {{ validate_ha_results | dict2items | rejectattr('value') | map(attribute='key') | list }}"
+            success_msg: All Proxmox HA checks passed
+            quiet: true
 
 # ---------------------------------------------------------------------------------------------------------------
 # Disruptive tests. Only with --tags disruptive. Each test restores a healthy cluster; the leader may end up on a

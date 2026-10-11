@@ -91,6 +91,26 @@
   loop_control:
     loop_var: vm_host
 
+# The VIP only comes up later (keepalived). For a new environment nothing may answer on it yet;
+# once any VM of the environment exists, the VIP may legitimately be up.
+- name: Probe the VIP of the new environment - {{ cluster_vip }}
+  ansible.builtin.command: ping -c 2 -W 1 {{ cluster_vip }}
+  register: proxmox_vm_vip_probe
+  changed_when: false
+  failed_when: false
+  check_mode: false    # read-only, needed in --check too
+  when: proxmox_vm_existing_hosts | default([]) | length == 0
+
+- name: Guard - VIP of a new environment must be unused
+  ansible.builtin.assert:
+    that:
+      - proxmox_vm_vip_probe.rc != 0
+    fail_msg: >-
+      VIP {{ cluster_vip }} answers ping, but no VM of {{ pgc_env }} exists yet: another machine uses it.
+      Pick a free VIP in environments.yml. Nothing was changed.
+    quiet: true
+  when: proxmox_vm_existing_hosts | default([]) | length == 0
+
 - name: Provision each VM
   ansible.builtin.include_tasks: vm.yml
   loop: "{{ groups['pg_nodes'] }}"

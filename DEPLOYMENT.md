@@ -74,6 +74,15 @@ Plan per environment:
 | VRRP router ID, unique on that L2 segment (1–255) | 1 | 242 |
 | Gateway, DNS servers | | 10.50.200.1; 1.1.1.1 |
 
+**The addresses must be unused**, including by machines outside your Proxmox cluster. A VM whose IP is already taken comes up without an address, and SSH silently reaches the other machine instead. Check every node IP and the VIP of each environment. Run on: **any Proxmox node** (on the DB subnet)
+```bash
+for ip in 10.50.200.242 10.50.200.243 10.50.200.244 10.50.200.245; do
+  ping -c1 -W1 $ip >/dev/null 2>&1; m=$(ip neigh show $ip | grep -v FAILED | awk '{print $5}')
+  [ -n "$m" ] && echo "$ip IN USE ($m)" || echo "$ip free"
+done
+```
+`ip neigh` also catches hosts that drop ping but answer ARP. `provision.yml` repeats a ping check before cloning and stops if a new VM's IP, or a new environment's VIP, answers. Put addresses known to be taken into `pgc_reserved_ips` (section 3.2), so preflight refuses them.
+
 Required network flows:
 
 | From | To | Port / protocol | Purpose |
@@ -99,7 +108,15 @@ If the bridge is VLAN-tagged, set `net_vlan_tag` (section 3.6). If your switches
   ```bash
   ip route get 10.50.200.242          # must not leave through your internet default route
   ```
-- An SSH key pair. Its public key goes into the VMs (section 3.7), and its private key must be usable without a prompt, from `ssh-agent` or `~/.ssh/id_ed25519`.
+- An SSH key pair. Its public key goes into the VMs (section 3.7). Ansible can't answer a passphrase prompt, so the private key must be usable **without a prompt** for the VM addresses: unencrypted, or loaded in the agent that SSH uses for those addresses. If `~/.ssh/config` has a `Host *` block with another `IdentityAgent` (for example a password manager's agent that doesn't hold this key), add a block for the DB subnet **above** it. Run on: **workstation**
+  ```
+  Host 10.50.200.24?
+      IdentityAgent SSH_AUTH_SOCK
+  ```
+  ```bash
+  ssh -G ansible@10.50.200.242 | grep identityagent     # the agent SSH will use for the VMs
+  ssh-add -l                                            # that agent must list your key
+  ```
 
 ### 1.4 Prometheus (optional)
 
@@ -164,7 +181,8 @@ pgc_environments:
     vm_ids: [242, 243, 244]                  # the only VM IDs provisioning may touch for this env
   prod:
     ...
-pgc_reserved_ips: []                     # IPs that must never be assigned
+pgc_reserved_ips:                        # IPs that must never be assigned, e.g. ones other machines use
+  - 10.50.200.231
 prometheus_server_ip: 10.45.66.120                     # only this IP may scrape metrics
 ```
 
@@ -285,15 +303,28 @@ pveum acl modify /sdn/zones/localnetwork/vmbr0 --users "$PVE_USER" --roles PVESD
 pveum role add PGC-HA --privs "Sys.Audit,Sys.Console"     # "already exists": fine, go on
 pveum acl modify / --users "$PVE_USER" --roles PGC-HA --propagate 0
 ```
+For a **privsep 1** token, grant the same roles to the token as well. Run on: **Proxmox node** (as root)
+```bash
+TOK="${PVE_USER}"'!'"${PVE_TOKEN}"
+for a in "/pool/postgresql-pool PVEVMAdmin" "/vms/9000 PVETemplateUser" \
+         "/storage/RBD-Disk PVEDatastoreUser" "/sdn/zones/localnetwork/vmbr0 PVESDNUser"; do
+  set -- $a; pveum acl modify "$1" --tokens "$TOK" --roles "$2"
+done
+pveum acl modify / --tokens "$TOK" --roles PGC-HA --propagate 0
+```
+A privsep 1 token that only has the user's ACLs fails with `403 Permission check failed (/storage/RBD-Disk, Datastore.AllocateSpace)` at the clone.
 `Sys.Console` on `/` is what the Proxmox API requires to create HA resources and rules (`Sys.Audit` to read them); it also allows console access to the nodes, so keep the token secret in the vault only. Background in [docs/proxmox-ha.md](docs/proxmox-ha.md).
 
 Check the effective permissions. Run on: **Proxmox node**
 ```bash
-pveum user token permissions "$PVE_USER" "$PVE_TOKEN" --path /       # expect Sys.Audit and Sys.Console (HA)
-pveum user token permissions "$PVE_USER" "$PVE_TOKEN" --path /pool/postgresql-pool
+pveum user token permissions "$PVE_USER" "$PVE_TOKEN" --path /                             # Sys.Audit, Sys.Console (HA)
+pveum user token permissions "$PVE_USER" "$PVE_TOKEN" --path /pool/postgresql-pool         # VM.Allocate
+pveum user token permissions "$PVE_USER" "$PVE_TOKEN" --path /vms/9000                     # VM.Clone
+pveum user token permissions "$PVE_USER" "$PVE_TOKEN" --path /storage/RBD-Disk             # Datastore.AllocateSpace
+pveum user token permissions "$PVE_USER" "$PVE_TOKEN" --path /sdn/zones/localnetwork/vmbr0 # SDN.Use
 ```
 
-This permission set is a least-privilege starting point. This exact set hasn't been run end-to-end yet. If provisioning stops with `403 Permission check failed (<path>, <privilege>)`, grant that privilege on that path and re-run; nothing is half-created. Adding VMs to the pool may also need `Pool.Allocate` on `/pool/postgresql-pool`.
+This permission set is a least-privilege starting point, tested on Proxmox VE 9.2 for the template, the VMs and HA. If provisioning stops with `403 Permission check failed (<path>, <privilege>)`, grant that privilege on that path and re-run; nothing is half-created. Adding VMs to the pool may also need `Pool.Allocate` on `/pool/postgresql-pool`.
 
 Test the token. Run on: **workstation**
 ```bash
@@ -377,7 +408,7 @@ source .venv/bin/activate
 export ENV=dev
 export INV="-i inventories/$ENV"
 export VAULT="--vault-id $ENV@$HOME/.ansible/vault/pgc-$ENV"
-ssh-add ~/.ssh/id_ed25519            # once per shell if your key has a passphrase
+ssh-add ~/.ssh/id_ed25519            # once per shell if your key has a passphrase (into the agent SSH uses for the VMs, section 1.3)
 ```
 
 Run on: **workstation**. None of these contact any host.
@@ -389,7 +420,7 @@ ansible-playbook $INV $VAULT playbooks/preflight.yml
 ```
 Preflight expected result: `failed=0` for every DB VM.
 
-It checks that each VM's IP and VM ID match the registry, aren't reserved, and don't belong to another environment, and that the three VMs sit on three different Proxmox nodes with distinct VM IDs. Fix any mismatch it reports in `hosts.yml`, `host_vars` or `environments.yml`.
+It checks that each VM's IP and VM ID match the registry, aren't in `pgc_reserved_ips`, and don't belong to another environment, and that the three VMs sit on three different Proxmox nodes with distinct VM IDs. Fix any mismatch it reports in `hosts.yml`, `host_vars` or `environments.yml`.
 
 ---
 
@@ -429,13 +460,13 @@ Leftovers you may delete by hand once the template exists: `/root/pgc-ks-9000` o
 4. With `pve_ha_enabled`: add each VM as an HA resource (requested state `started`) plus a rule `pgc-<vm>-home` that prefers its own node; the HA manager starts the VMs. Without it, start the VMs directly.
 5. Wait for SSH.
 
-The dry run prints a plan per VM, including its HA resource and rule, and checks the safety guards, without changing anything. The HA resource task shows as `skipped` in `--check` (the module has no check mode).
+**Checks before any change** (they also run in `--check`); any failure stops the play with nothing changed:
+- Proxmox VE is 9 or newer, and the token has `Sys.Audit` + `Sys.Console` on `/` (only with `pve_ha_enabled`);
+- the template exists and is ours;
+- for **all three** VMs, before the first one is touched: the VM ID belongs to this environment, an existing VM is ours (name + `pgc` tag) and has the expected disk layout, and a VM still to be created has an IP nobody answers on;
+- for a new environment: nothing answers on its VIP.
 
-Check HA afterwards. Run on: **Proxmox node** (any)
-```bash
-ha-manager status            # expect: service vm:<id> (<home node>, started) for each VM
-ha-manager rules config      # expect: pgc-<vm>-home, node-affinity, one per VM
-```
+The dry run prints a plan per VM, including its HA resource and rule. The HA resource task shows as `skipped` in `--check` (the module has no check mode).
 
 Run on: **workstation**
 ```bash
@@ -443,7 +474,13 @@ ansible-playbook $INV $VAULT playbooks/provision.yml --tags vms --check --diff
 ansible-playbook $INV $VAULT playbooks/provision.yml --tags vms
 ansible $INV $VAULT pg_nodes -m ansible.builtin.ping          # expect: 3 x "pong"
 ```
-New VM host keys are accepted on first contact (`StrictHostKeyChecking=accept-new`).
+New VM host keys are accepted on first contact (`StrictHostKeyChecking=accept-new`). The last play waits up to 10 minutes for SSH. If it keeps retrying, stop it (`Ctrl+C`) instead of letting it run: every failed login extends the VMs' sshd penalty for your IP. Then see section 12.
+
+Check HA. Run on: **Proxmox node** (any)
+```bash
+ha-manager status            # expect: service vm:<id> (<home node>, started) for each VM
+ha-manager rules config      # expect: pgc-<vm>-home, node-affinity, one per VM
+```
 
 ### 7.3 OS baseline
 
@@ -714,7 +751,13 @@ ansible-playbook $INV $VAULT playbooks/site.yml --tags baseline,patroni,pgbounce
 | Proxmox `401` | Token id or secret wrong | `make vault-edit ENV=<env>` |
 | `ACL update failed: user '...' does not exist` | The commands in section 4 were run with a user that doesn't exist (for example the example `ansible@pve` while your token belongs to another user) | Set `PVE_USER` to the user that owns your token (`pveum user list`) and re-run section 4.2 |
 | Proxmox `403 Permission check failed (<path>, <priv>)` | Missing privilege | Grant it on that path (section 4). On PVE 9, cloning needs `SDN.Use` on the bridge's zone. |
-| `Permission denied (publickey)` / `ssh_askpass` errors on the VMs | Key not in the agent, or a `Host *` block in `~/.ssh/config` forces another agent | `ssh-add`. Check `ssh -G ansible@<vm-ip> \| grep identityagent`; add a `Host <vm-ips>` block with `IdentityAgent SSH_AUTH_SOCK` above `Host *` |
+| `Permission denied (publickey)` / `ssh_askpass` errors on the VMs; works interactively but not in Ansible | Key not in the agent, or a `Host *` block in `~/.ssh/config` forces another agent; interactive SSH just asks for the passphrase | `ssh-add`. Check `ssh -G ansible@<vm-ip> \| grep identityagent`; add a `Host <vm-ips>` block with `IdentityAgent SSH_AUTH_SOCK` above `Host *` (section 1.3) |
+| SSH to a new VM offers a password prompt or rejects your key, although cloud-init got the key; guest agent shows no IPv4 on the VM | **IP conflict**: another machine owns the address, the VM backed off and has no IP | Compare MACs (runbook §15). Remove the other machine, or move the environment to free IPs (section 13.1). New VMs are protected by the IP check in 7.2 |
+| `Connection reset by <vm-ip> port 22`; sshd log: `drop connection ... penalty: failed authentication` | OpenSSH per-source penalty after repeated failed logins (often a retry loop with the wrong key) | Fix the cause, stop retries, wait up to ~10 min, then log in once |
+| `Guard - IP of a new VM must be unused` / `VIP of a new environment must be unused` fails | Something answers on that address | Section 1.2; pick free addresses (section 13.1) |
+| `403 ... (/storage/<storage>, Datastore.AllocateSpace)` at the clone | privsep 1 token without its own ACLs | Section 4.2, the privsep 1 block |
+| Console: `Login incorrect` for root | Root is locked by design | Log in as `ansible` with the vault console password, via `qm terminal <vmid>` (runbook §15) |
+| Baseline: `Disk with serial pgdata ... is missing, not unique` | The VM lacks the disk, or two disks carry the serial | `qm config <vmid>` must show `serial=pgdata` etc. on scsi1–3; in the VM `lsblk -o NAME,SERIAL` |
 | `UNREACHABLE` on the VMs | No route from the workstation, or VMs still booting | `ip route get <vm-ip>`; wait for 7.2 to finish |
 | `Host key verification failed` after re-creating a VM | Old key in `known_hosts` | `ssh-keygen -R <vm-ip>` |
 | Baseline stops: SSH source would be locked out | The workstation's IP, as the VMs see it, isn't in `admin_cidrs` | Add it to `admin_cidrs`. If NAT is involved, use the NAT address. |
@@ -723,7 +766,7 @@ ansible-playbook $INV $VAULT playbooks/site.yml --tags baseline,patroni,pgbounce
 | A replica's `pg_wal` is a plain directory | It was cloned without `--waldir` | On any node: `sudo patronictl -c /etc/patroni/patroni.yml reinit <scope> <member>` (runbook §5) |
 | VIP doesn't move / clients can't reach it after a move | VRRP or gratuitous ARP filtered on the bridge or switch | Allow IP protocol 112 between the nodes and GARP on the segment |
 | `assert ... Proxmox VE 9 or newer for HA rules` | Cluster on PVE 8 | Upgrade, or set `pve_ha_enabled: false` |
-| `403 ... (/, Sys.Console)` or `(/, Sys.Audit)` | HA privileges missing | Section 4, Proxmox HA lines |
+| `Assert the token may manage Proxmox HA` fails, or `403 ... (/, Sys.Console)` / `(/, Sys.Audit)` | HA privileges missing (on the token too, if privsep 1) | Section 4.2 |
 | validate: `<vm> ha_on_home_node` failed | The VM runs on another node: its home node is down, in maintenance, or failback is still running | `ha-manager status`; bring the home node back (runbook §14) |
 | `ERROR: Ansible requires blocking IO on stdin/stdout/stderr` | Output redirected in some shells | Run in a normal terminal without redirecting stderr |
 
@@ -733,11 +776,24 @@ ansible-playbook $INV $VAULT playbooks/site.yml --tags baseline,patroni,pgbounce
 
 The project never deletes anything in Proxmox. Removing an environment is a manual, irreversible operation. Do it only when you mean to destroy its data.
 
-Run on: **Proxmox node**, as root, for each of the environment's VM IDs (dev: 242, 243, 244)
+Why by hand: a playbook that deletes is one wrong `-i inventories/...` away from wiping the other environment, and the guards only know the VM IDs in the current registry.
+
+Run on: **the Proxmox node that runs the VM** (`ha-manager status` shows it), as root, for each of the environment's VM IDs (dev: 242, 243, 244)
 ```bash
 qm config 242 | grep -E '^(name|tags)'      # confirm it's the right VM before destroying it
 ha-manager remove vm:242                    # if HA-managed: also removes rule pgc-<vm>-home (it only references this VM)
 qm stop 242
-qm destroy 242 --purge                      # deletes the VM and its disks; --purge also drops it from pool and job configs
+qm destroy 242 --purge --destroy-unreferenced-disks 1   # deletes the VM and its disks, drops it from pool and job configs
 ```
-Then, on the **workstation**, remove the VMs' old host keys (`ssh-keygen -R <vm-ip>`). To redeploy, start again at section 7.2. The template and the CA can be reused.
+Check, on **any Proxmox node**: `ha-manager rules config | grep pgc` and `pvesh get /cluster/resources --type vm` no longer show them. Then, on the **workstation**, remove the VMs' old host keys (`ssh-keygen -R <vm-ip>`). To redeploy, start again at section 7.2. The template and the CA can be reused.
+
+### 13.1 Moving an environment to other IPs or VM IDs
+
+For example after finding an IP conflict, before the cluster holds data:
+1. Pick free addresses (section 1.2). By convention the VM ID is the last octet of the IP.
+2. Change them in `environments.yml` (nodes, VIP, VRRP ID, `vm_ids`), `hosts.yml` and `host_vars/*.yml`. Add the abandoned conflicting IPs to `pgc_reserved_ips`.
+3. Destroy the old VMs by hand as above: they are no longer in the registry, so the playbooks won't touch them.
+4. Add the new IPs to your `~/.ssh/config` agent block if you use one (section 1.3).
+5. Run section 6, then 7.2 onwards.
+
+Moving an environment that already holds data is a migration (new cluster plus replication or dump/restore), not covered here.

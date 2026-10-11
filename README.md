@@ -129,7 +129,7 @@ Versions are pinned in `playbooks/group_vars/all/versions.yml` and in each expor
 
 **Automation:**
 - **Tooling:** ansible-core 2.20, Python 3.12+, and the collections `community.proxmox` 2.x, `community.general` 13.x, `community.postgresql` 5.x, `community.crypto` 3.x and `ansible.posix` 2.x. `make deps` installs all of them into the repo (`.venv`, `./collections`).
-- **Proxmox:** VE 9.x. The VM template is built over SSH with `qm`. The VMs are created through the Proxmox API with a token.
+- **Proxmox:** VE 9.x (HA rules need 9.0+). The VM template is built over SSH with `qm` (root SSH to one node). The VMs and their HA resources and rules are created through the Proxmox API with a token; [DEPLOYMENT.md §4](DEPLOYMENT.md#4-proxmox-preparation) lists its privileges.
 
 ---
 
@@ -159,7 +159,8 @@ Versions are pinned in `playbooks/group_vars/all/versions.yml` and in each expor
   - exporter tarballs are checked against their upstream sha256.
 - **VMs:**
   - the cloud-init user is SSH key-only with passwordless sudo, and root login is locked;
-  - the console password is in the vault, for emergency access only.
+  - the console password is in the vault, for emergency access only (serial console, runbook §15).
+- **Proxmox API token:** privileges per path (pool, template, storage, bridge). Proxmox HA needs `Sys.Audit` and `Sys.Console` on `/`, because the HA API has no finer scope; the token secret lives only in the vault.
 
 ---
 
@@ -172,16 +173,16 @@ The full checklist, with commands to verify each item, is in [DEPLOYMENT.md §1]
   - shared VM storage, e.g. Ceph RBD, so clones can be placed on any node;
   - ISO storage reachable from the template node, e.g. CephFS;
   - a Linux bridge onto the DB subnet;
-  - an API token, plus root SSH to one node (only for building the template).
+  - an API token with the privileges in DEPLOYMENT.md §4, including the HA ones, plus root SSH to one node (only for building the template).
 - **Network, per environment:**
-  - 3 node IPs and 1 VIP in one subnet;
+  - 3 node IPs and 1 VIP in one subnet, **verifiably unused** (provisioning refuses addresses another machine answers on);
   - a free VRRP router ID;
   - VRRP and gratuitous ARP allowed on the bridge;
   - outbound HTTPS from the VMs to the AlmaLinux, PGDG and Fedora EPEL mirrors.
 - **Workstation:**
   - Linux with Python 3.12+, `git`, `make`, `openssl`;
   - a route to the DB subnet;
-  - an SSH key pair;
+  - an SSH key pair that SSH can use without a prompt for the VM addresses (an agent; check `ssh -G`, DEPLOYMENT.md §1.3);
   - outbound HTTPS to GitHub, Ansible Galaxy and PyPI.
 - **Optional:** a Prometheus server to scrape the exporters.
 
@@ -201,7 +202,7 @@ inventories/
     hosts.yml                   # Proxmox nodes + DB VMs with their IPs
     group_vars/all/main.yml     # env name, VM sizing, OS LVM sizes, PostgreSQL disk sizes
     group_vars/all/network.yml  # prefix, gateway, DNS, bridge, VLAN, admin/app CIDRs, NTP, timezone
-    group_vars/all/proxmox.yml  # API host, template, storage, pool, cloud-init user + SSH key
+    group_vars/all/proxmox.yml  # API host, template, storage, pool, Proxmox HA, cloud-init user + SSH key
     group_vars/all/vault.yml    # secrets, ansible-vault encrypted, git-ignored (keys: vault.yml.example)
     group_vars/pg_nodes.yml     # SSH user/become for the DB VMs
     host_vars/<vm>.yml          # VM ID, Proxmox node, keepalived priority
@@ -225,6 +226,7 @@ roles/
 docs/
   runbook.md                    # day-2 operations
   architecture.md               # architecture reference (ports, disks, isolation)
+  proxmox-ha.md                 # Proxmox HA for the DB VMs: requirements, setup, failure behaviour
   autobase-notes.md             # what was taken from autobase and what differs
   prometheus/<cluster>.yml      # generated Prometheus scrape config per env
 ```
@@ -303,9 +305,15 @@ These rules keep the project reproducible. If a change breaks one, fix the chang
 **Proxmox safety.** The provisioning roles never delete anything. They only touch:
 - VM IDs listed for the environment in the registry;
 - an existing VM only if its name matches and it carries the `pgc` tag;
-- the template VM only if it is the finished `tpl-alma10` template.
+- the template VM only if it is the finished `tpl-alma10` template;
+- HA resources and rules of those VMs (`vm:<id>`, `pgc-<vm>-home`).
 
-Any other conflict stops the play with nothing changed.
+Before the first change, `provision.yml --tags vms` also checks:
+- Proxmox VE is 9 or newer, and the token has the HA privileges (when `pve_ha_enabled`);
+- every VM ID, name and disk layout, for all three VMs, before any VM is changed;
+- no other machine answers on a new VM's IP, or on the VIP of a new environment.
+
+Any conflict stops the play with nothing changed. Removing VMs is always a manual step (DEPLOYMENT.md §13).
 
 **Code**
 - One role per component. Role variables are prefixed with the role name.
@@ -328,5 +336,6 @@ Any other conflict stops the play with nothing changed.
 | [DEPLOYMENT.md](DEPLOYMENT.md) | Building an environment from scratch, step by step |
 | [docs/runbook.md](docs/runbook.md) | Operating a running cluster |
 | [docs/architecture.md](docs/architecture.md) | Architecture reference (ports, disks, isolation) |
+| [docs/proxmox-ha.md](docs/proxmox-ha.md) | Proxmox HA for the DB VMs: requirements, setup, failure behaviour |
 | [docs/autobase-notes.md](docs/autobase-notes.md) | Design comparison with autobase |
 | `docs/prometheus/<cluster>.yml` | Scrape jobs to add to Prometheus |

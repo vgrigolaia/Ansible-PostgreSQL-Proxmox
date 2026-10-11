@@ -35,7 +35,7 @@ Quick look. Run on: **any node**
 ```bash
 pctl list                                        # 1 Leader, the others "streaming", lag 0
 sudo /usr/local/bin/etcdctl-pgc endpoint health --cluster -w table
-ip -br addr | grep -E '172\.16\.67\.23[48]'      # which node holds the VIP
+ip -br addr | grep -E '10\.50\.200\.(245|249)'    # which node holds the VIP (dev .245, prod .249)
 ```
 
 ## 2. Planned switchover (maintenance on the leader)
@@ -129,7 +129,7 @@ sudo systemctl reload pgbouncer        # after editing config; listen_addr/port 
 
 Run on: **any node**
 ```bash
-ip -br addr | grep -E '172\.16\.67\.23[48]'
+ip -br addr | grep -E '10\.50\.200\.(245|249)'
 echo "show stat" | sudo socat stdio /var/lib/haproxy/stats | cut -d, -f1,2,18 | grep -vE 'FRONTEND|BACKEND'
 ```
 Stats page from an admin workstation: `http://<node-ip>:8404/stats`.
@@ -208,7 +208,30 @@ ha-manager set vm:243 --state started      # start again
 ```
 Re-running `provision.yml --tags vms` also sets every VM back to `started`.
 
-## 15. Not covered yet
+## 15. Console access (SSH not possible)
+
+Root is locked on every VM. Log in as the cloud-init user `ansible` with the console password from the vault. Run on: **workstation**
+```bash
+make credentials ENV=<env>          # "Console  user ansible, password ..."
+```
+Use the serial console: unlike the noVNC console in the web UI, it accepts pasted passwords. Run on: **the Proxmox node that runs the VM** (`ha-manager status` shows it)
+```bash
+qm terminal <vmid>                  # Enter for a login prompt; exit with Ctrl+O
+```
+
+If SSH with your key fails, check in this order:
+1. **Is it our VM?** Another machine on the same IP takes the SSH connection. Compare MACs. Run on: **any Proxmox node**
+   ```bash
+   qm config <vmid> | grep ^net0                              # the VM's MAC
+   ping -c1 <vm-ip> >/dev/null; ip neigh show <vm-ip>         # the MAC that answers; must be the same
+   ```
+2. **Does SSH use the right agent?** Run on: **workstation**
+   ```bash
+   ssh -G ansible@<vm-ip> | grep identityagent                # the agent that holds your key (ssh-add -l)
+   ```
+3. **Is sshd penalising you?** After repeated failed logins, OpenSSH drops every connection from your IP for up to about 10 minutes (`Connection reset`; in the VM: `journalctl -u sshd` shows `penalty: failed authentication`). Stop retrying, wait, then log in once.
+
+## 16. Not covered yet
 
 - Backups / point-in-time recovery (planned: pgBackRest).
 - Alert rules for Prometheus.

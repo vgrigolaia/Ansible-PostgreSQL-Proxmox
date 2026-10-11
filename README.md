@@ -246,9 +246,9 @@ The reference values in this repository. To adapt them to your own infrastructur
 
 | | dev | prod |
 |---|---|---|
-| node 1 | pgdb01-dev, 10.50.200.231, VM 231 on pve01 | pgdb01-prod, 10.50.200.235, VM 235 on pve01 |
-| node 2 | pgdb02-dev, 10.50.200.232, VM 232 on pve02 | pgdb02-prod, 10.50.200.236, VM 236 on pve02 |
-| node 3 | pgdb03-dev, 10.50.200.233, VM 233 on pve03 | pgdb03-prod, 10.50.200.237, VM 237 on pve03 |
+| node 1 | pgdb01-dev, 10.50.200.231, VM 231 on DC-A-PVE-11 | pgdb01-prod, 10.50.200.235, VM 235 on DC-A-PVE-11 |
+| node 2 | pgdb02-dev, 10.50.200.232, VM 232 on DC-A-PVE-12 | pgdb02-prod, 10.50.200.236, VM 236 on DC-A-PVE-12 |
+| node 3 | pgdb03-dev, 10.50.200.233, VM 233 on DC-A-PVE-13 | pgdb03-prod, 10.50.200.237, VM 237 on DC-A-PVE-13 |
 | VIP / VRRP ID | 10.50.200.234 / 231 | 10.50.200.238 / 235 |
 | Patroni scope | `pgc-dev` | `pgc-prod` |
 | VM size | 2 vCPU, 4 GB RAM | 2 vCPU, 4 GB RAM |
@@ -258,7 +258,7 @@ The reference values in this repository. To adapt them to your own infrastructur
 | Patroni watchdog | `automatic` | `required` |
 
 **Shared:**
-- Proxmox nodes pve01–pve03 at 10.50.200.11–13, API on pve01;
+- Proxmox nodes DC-A-PVE-11–13 at 10.50.200.11–13, API on DC-A-PVE-11;
 - network 10.50.200.0/24, gateway 10.50.200.1, DNS 1.1.1.1, bridge `vmbr0`;
 - VM storage Ceph RBD `RBD-Disk`, ISO storage CephFS `cephfs`;
 - template VM 9000 (`tpl-alma10`) and Proxmox pool `postgresql-pool`;

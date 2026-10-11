@@ -1,13 +1,13 @@
 ---
 # Proxmox VE 9
-pve_api_host: 10.50.200.11   # pve01
+pve_api_host: 10.50.200.11   # DC-A-PVE-11
 pve_api_validate_certs: false
 pve_api_token_id: "{{ vault_pve_api_token_id }}"
 pve_api_token_secret: "{{ vault_pve_api_token_secret }}"
 
 # The template is built once on pve_template_node and shared by dev and prod
 pve_template_vmid: 9000
-pve_template_node: pve01
+pve_template_node: DC-A-PVE-11
 pve_storage: RBD-Disk                  # Ceph RBD: VM disks
 pve_iso_storage: cephfs                # CephFS, shared by all nodes: DVD ISO + kickstart ISO
 pve_iso_dir: /mnt/pve/cephfs/template/iso

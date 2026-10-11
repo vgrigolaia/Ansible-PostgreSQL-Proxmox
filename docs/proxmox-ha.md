@@ -24,9 +24,9 @@ For the reference setup:
 
 | VM | Home node | HA rule |
 |---|---|---|
-| pgdb01-dev (231) / pgdb01-prod (235) | pve01 | pgc-pgdb01-dev-home / pgc-pgdb01-prod-home |
-| pgdb02-dev (232) / pgdb02-prod (236) | pve02 | pgc-pgdb02-dev-home / pgc-pgdb02-prod-home |
-| pgdb03-dev (233) / pgdb03-prod (237) | pve03 | pgc-pgdb03-dev-home / pgc-pgdb03-prod-home |
+| pgdb01-dev (231) / pgdb01-prod (235) | DC-A-PVE-11 | pgc-pgdb01-dev-home / pgc-pgdb01-prod-home |
+| pgdb02-dev (232) / pgdb02-prod (236) | DC-A-PVE-12 | pgc-pgdb02-dev-home / pgc-pgdb02-prod-home |
+| pgdb03-dev (233) / pgdb03-prod (237) | DC-A-PVE-13 | pgc-pgdb03-dev-home / pgc-pgdb03-prod-home |
 
 **Why non-strict node affinity and not "keep apart" (anti-affinity)?** A negative resource-affinity rule is always strict in Proxmox VE: if a node fails, its VM would not be restarted anywhere, because the other two nodes already run a VM of the same rule. Non-strict node affinity lets HA restart the VM on a surviving node and move it back when its home node returns. The price: while a node is down, two DB VMs of one environment share a Proxmox node (section 6).
 
@@ -45,7 +45,7 @@ The template built by this project meets the storage requirement: the install IS
 
 ## 4. Setup
 
-1. **Node names.** Run `pvecm nodes` on any Proxmox node and use those names for the hosts in `pve_nodes` (`inventories/<env>/hosts.yml`), `pve_template_node` and `vm_pve_node` (`inventories/<env>/host_vars/*.yml`). If your nodes are called e.g. `DC-A-PVE-11`, the inventory must say `DC-A-PVE-11`, not `pve01`.
+1. **Node names.** Run `pvecm nodes` on any Proxmox node and use those names for the hosts in `pve_nodes` (`inventories/<env>/hosts.yml`), `pve_template_node` and `vm_pve_node` (`inventories/<env>/host_vars/*.yml`). The reference inventory uses `DC-A-PVE-11`, `DC-A-PVE-12` and `DC-A-PVE-13`; yours must match `pvecm nodes` exactly.
 2. **Privileges.** [DEPLOYMENT.md §4.2](../DEPLOYMENT.md#4-proxmox-preparation), the "Proxmox HA" lines. Use the user that owns your token.
 3. **Variables** in `inventories/<env>/group_vars/all/proxmox.yml`:
    ```yaml
@@ -66,7 +66,7 @@ Existing VMs (provisioned before HA was enabled) are put under HA by the same co
 
 Run on: **any Proxmox node**
 ```bash
-ha-manager status            # expect: "service vm:231 (pve01, started)" and so on for each VM
+ha-manager status            # expect: "service vm:231 (DC-A-PVE-11, started)" and so on for each VM
 ha-manager rules config      # expect: one pgc-<vm>-home node-affinity rule per VM
 ```
 

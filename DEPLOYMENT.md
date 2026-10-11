@@ -29,7 +29,7 @@ Architecture and conventions are in [README.md](README.md). Day-2 operations are
 - **Proxmox node**: a PVE node, as root;
 - **DB VM**: one of the environment's PostgreSQL VMs, as the cloud-init user (`ansible`). Use `sudo` where shown.
 
-**Example values.** Examples use environment `dev` and the reference values in this repository: Proxmox nodes `pve01..03`, DB VMs `10.50.200.231–233`, VIP `10.50.200.234`. Replace them with your own values from section 3.
+**Example values.** Examples use environment `dev` and the reference values in this repository: Proxmox nodes `DC-A-PVE-11..13`, DB VMs `10.50.200.231–233`, VIP `10.50.200.234`. Replace them with your own values from section 3.
 
 **Check, then apply.** Every step that changes something is run twice:
 1. with `--check --diff`, to see what would change;
@@ -181,11 +181,11 @@ The group name `pgc_<env>` is free text.
 
 ```yaml
 vm_id: 231                 # must be in the registry's vm_ids for this env
-vm_pve_node: pve01     # Proxmox node that hosts this VM; the three VMs must be on three different nodes
+vm_pve_node: DC-A-PVE-11     # Proxmox node that hosts this VM; the three VMs must be on three different nodes
 keepalived_priority: 100   # 100 / 90 / 80: highest gets the VIP first
 ```
 
-**Node names must be the real Proxmox node names** (`pvecm nodes`, column `Name`, case-sensitive) in `vm_pve_node`, `pve_template_node` and the `pve_nodes` hosts of `hosts.yml`. They are passed to the Proxmox API and used in the HA rules; `pve01` is only the reference name.
+**Node names must be the real Proxmox node names** (`pvecm nodes`, column `Name`, case-sensitive) in `vm_pve_node`, `pve_template_node` and the `pve_nodes` hosts of `hosts.yml`. They are passed to the Proxmox API and used in the HA rules; `DC-A-PVE-11..13` are the reference names.
 
 ### 3.5 Sizing: `inventories/<env>/group_vars/all/main.yml`
 
@@ -224,7 +224,7 @@ Provisioning refuses to run while any of these is empty.
 | `pve_api_validate_certs` | false | Set true if the API has a trusted certificate |
 | `pve_template_vmid` | 9000 | Shared by all envs; built once |
 | `vm_scsihw` / `vm_os_disk_slot` | virtio-scsi-single / scsi0 | Disk controller and OS disk slot, for the template and the VMs. PostgreSQL disk slots are `vm_pg_disks[].slot` (scsi1–3) in `main.yml` |
-| `pve_template_node` | pve01 | Must be a host in `pve_nodes` |
+| `pve_template_node` | DC-A-PVE-11 | Must be a host in `pve_nodes` |
 | `pve_storage` | RBD-Disk | Exact storage ID, case-sensitive |
 | `pve_iso_storage` / `pve_iso_dir` | cephfs / `/mnt/pve/cephfs/template/iso` | Storage ID and its filesystem path on the template node |
 | `vm_cpu_type` | x86-64-v3 | Keep |

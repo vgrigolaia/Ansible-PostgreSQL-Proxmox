@@ -1,5 +1,5 @@
 ---
-# Runs on: the template node (pve01) as root.
+# Runs on: the template node (DC-A-PVE-11) as root.
 # Creates only new objects: VM {{ pve_template_vmid }}, the DVD ISO (if absent), the kickstart dir and kickstart ISO.
 # Never deletes, modifies or overwrites anything that already exists; any conflict stops the play.
 

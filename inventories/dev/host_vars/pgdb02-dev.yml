@@ -1,4 +1,4 @@
 ---
 vm_id: 232
-vm_pve_node: pve02
+vm_pve_node: DC-A-PVE-12
 keepalived_priority: 90

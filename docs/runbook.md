@@ -194,10 +194,10 @@ ha-manager rules config
 **Planned maintenance on a Proxmox node** (updates, reboot). Do one node at a time. Run the Patroni part on **any DB VM** and the HA part on **any Proxmox node**:
 ```bash
 pctl list                                             # DB VM: if the VM on this node is Leader, switch over first (section 2)
-ha-manager crm-command node-maintenance enable pve02  # Proxmox: HA live-migrates the node's HA VMs to other nodes
-ha-manager status                                     # Proxmox: wait until no pgc VM runs on pve02
+ha-manager crm-command node-maintenance enable DC-A-PVE-12  # Proxmox: HA live-migrates the node's HA VMs to other nodes
+ha-manager status                                     # Proxmox: wait until no pgc VM runs on DC-A-PVE-12
 #   ... maintenance, reboot ...
-ha-manager crm-command node-maintenance disable pve02 # Proxmox: the VMs migrate back to pve02
+ha-manager crm-command node-maintenance disable DC-A-PVE-12 # Proxmox: the VMs migrate back to DC-A-PVE-12
 ```
 Maintenance mode survives a reboot of the node; it stays on until you disable it. Without maintenance mode, a node *reboot* freezes its HA VMs, which come back up on the same node after the reboot (default shutdown policy `conditional`).
 

@@ -1,0 +1,60 @@
+---
+# Runs on: pgdb0x-<env>
+- name: Install HAProxy (+ socat for the stats socket)
+  ansible.builtin.dnf:
+    name: [haproxy, socat]
+    state: present
+
+- name: Read installed packages
+  ansible.builtin.package_facts:
+    manager: rpm
+
+- name: Configure HAProxy
+  when: not ansible_check_mode or 'haproxy' in ansible_facts.packages
+  block:
+    # haproxy_t may not bind 5001/8404 or connect to 6432 by default; the boolean keeps it confined to haproxy_t
+    - name: SELinux - let HAProxy bind and connect to its ports
+      ansible.posix.seboolean:
+        name: haproxy_connect_any
+        state: true
+        persistent: true
+
+    - name: Write haproxy.cfg
+      ansible.builtin.template:
+        src: haproxy.cfg.j2
+        dest: /etc/haproxy/haproxy.cfg
+        owner: root
+        group: root
+        mode: "0644"
+        validate: /usr/sbin/haproxy -c -q -f %s
+      notify: Reload haproxy
+
+    - name: Enable and start HAProxy
+      ansible.builtin.systemd_service:
+        name: haproxy
+        enabled: true
+        state: started
+
+- name: Apply pending reloads before the checks
+  ansible.builtin.meta: flush_handlers
+
+- name: Wait for the HAProxy ports
+  ansible.builtin.wait_for:
+    port: "{{ item }}"
+    timeout: 30
+  loop: ["{{ haproxy_primary_port }}", "{{ haproxy_replica_port }}", "{{ haproxy_stats_port }}"]
+  when: not ansible_check_mode
+
+# One server UP in "primary", n-1 UP in "replicas" (from the local stats socket)
+- name: Wait until the backends match the cluster
+  ansible.builtin.shell: |
+    set -o pipefail
+    echo "show stat" | socat stdio /var/lib/haproxy/stats | awk -F, '$2 != "BACKEND" && $2 != "FRONTEND" {print $1, $18}'
+  register: haproxy_stat
+  changed_when: false
+  until: >-
+    haproxy_stat.stdout_lines | select('match', '^primary UP') | list | length == 1 and
+    haproxy_stat.stdout_lines | select('match', '^replicas UP') | list | length == (groups['pg_nodes'] | length) - 1
+  retries: 20
+  delay: 3
+  when: not ansible_check_mode

@@ -1,0 +1,11 @@
+---
+haproxy_primary_port: 5000
+haproxy_replica_port: 5001
+haproxy_stats_port: 8404
+haproxy_backend_port: 6432            # pgbouncer on each node
+haproxy_patroni_port: 8008            # Patroni REST health checks
+# Replicas lagging more than this are taken out of the :5001 pool (Patroni /replica?lag=)
+haproxy_replica_max_lag: 16MB
+haproxy_maxconn: 4000
+haproxy_client_timeout: 30m
+haproxy_server_timeout: 30m

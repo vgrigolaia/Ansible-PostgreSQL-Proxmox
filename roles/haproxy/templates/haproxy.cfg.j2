@@ -1,0 +1,53 @@
+# {{ ansible_managed }}
+# Clients -> :{{ haproxy_primary_port }} (primary) / :{{ haproxy_replica_port }} (replicas) -> pgbouncer :{{ haproxy_backend_port }} on the chosen node.
+# Node roles come from Patroni's REST API on :{{ haproxy_patroni_port }}.
+
+global
+    log /dev/log local0
+    chroot /var/lib/haproxy
+    user haproxy
+    group haproxy
+    maxconn {{ haproxy_maxconn }}
+    stats socket /var/lib/haproxy/stats mode 600 level admin
+
+defaults
+    mode tcp
+    log global
+    option tcplog
+    option dontlognull
+    retries 2
+    timeout connect 5s
+    timeout client {{ haproxy_client_timeout }}
+    timeout server {{ haproxy_server_timeout }}
+    timeout check 3s
+    # A node that stops being primary/replica has its sessions cut, so clients reconnect to the right node
+    default-server inter 3s fastinter 1s downinter 5s rise 2 fall 3 on-marked-down shutdown-sessions
+
+frontend stats
+    mode http
+    bind :{{ haproxy_stats_port }}
+    option dontlognull
+    monitor-uri /health
+    http-request use-service prometheus-exporter if { path /metrics }
+    stats enable
+    stats uri /stats
+    stats refresh 10s
+
+listen primary
+    bind :{{ haproxy_primary_port }}
+    option httpchk
+    http-check send meth GET uri /primary
+    http-check expect status 200
+{% for h in groups['pg_nodes'] %}
+    server {{ h }} {{ hostvars[h].ansible_host }}:{{ haproxy_backend_port }} check port {{ haproxy_patroni_port }}
+{% endfor %}
+
+listen replicas
+    bind :{{ haproxy_replica_port }}
+    balance roundrobin
+    option httpchk
+    http-check send meth GET uri /replica?lag={{ haproxy_replica_max_lag }}
+    http-check expect status 200
+{% for h in groups['pg_nodes'] %}
+    server {{ h }} {{ hostvars[h].ansible_host }}:{{ haproxy_backend_port }} check port {{ haproxy_patroni_port }}
+{% endfor %}

@@ -1,0 +1,8 @@
+---
+pgdg_repo_base_url: https://download.postgresql.org/pub/repos/yum
+pgdg_repo_key_url: "{{ pgdg_repo_base_url }}/keys/PGDG-RPM-GPG-KEY-RHEL"
+pgdg_repo_key_path: /etc/pki/rpm-gpg/PGDG-RPM-GPG-KEY-RHEL
+# Verified 2026-10-07 against the key in pgdg-redhat-repo-42.0-69.rhel10PGDG
+pgdg_repo_key_fingerprint: D4BF08AE67A0B4C7A1DBCCD240BCA2B408B40D20
+# Only these packages may come from the PGDG "extras" repo (it also ships haproxy/keepalived, which we take from AppStream)
+pgdg_repo_extras_includepkgs: "etcd*"

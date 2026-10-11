@@ -1,0 +1,9 @@
+"{{ pgbouncer_auth_user }}" "{{ vault_pgbouncer_auth_password }}"
+{# stats users (pgbouncer_exporter) use the monitoring password #}
+{% for u in pgbouncer_stats_users %}
+"{{ u }}" "{{ vault_monitoring_password }}"
+{% endfor %}
+{% for u in pgbouncer_admin_users %}
+{# pgbouncer must know a user before peer auth applies; the hba file rejects these users everywhere except the admin console #}
+"{{ u }}" ""
+{% endfor %}

@@ -1,0 +1,137 @@
+---
+# Runs on: the template node (pve01) as root.
+# Creates only new objects: VM {{ pve_template_vmid }}, the DVD ISO (if absent), the kickstart dir and kickstart ISO.
+# Never deletes, modifies or overwrites anything that already exists; any conflict stops the play.
+
+- name: Check genisoimage is available (ships with qemu-server)
+  ansible.builtin.stat:
+    path: /usr/bin/genisoimage
+  register: proxmox_template_genisoimage
+
+- name: Read existing config of VM {{ pve_template_vmid }}
+  ansible.builtin.command: qm config {{ pve_template_vmid }}
+  register: proxmox_template_config
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: List all VM IDs in the cluster (qm config only sees this node)
+  ansible.builtin.command: pvesh get /cluster/resources --type vm --output-format json
+  register: proxmox_template_cluster_vms
+  changed_when: false
+  check_mode: false
+
+- name: Guard - VM ID is not used on another node
+  ansible.builtin.assert:
+    that:
+      - proxmox_template_config.rc == 0 or
+        (proxmox_template_cluster_vms.stdout | from_json | selectattr('vmid', 'equalto', pve_template_vmid | int) | list | length) == 0
+    fail_msg: >-
+      VM ID {{ pve_template_vmid }} already exists on another node of the cluster. Nothing was changed.
+      Check with: pvesh get /cluster/resources --type vm | grep {{ pve_template_vmid }}
+    quiet: true
+
+- name: Evaluate template state
+  ansible.builtin.set_fact:
+    proxmox_template_exists: "{{ proxmox_template_config.rc == 0 }}"
+    proxmox_template_is_ours: >-
+      {{ proxmox_template_config.rc == 0
+         and ('template: 1' in proxmox_template_config.stdout_lines)
+         and ('name: ' ~ proxmox_template_name) in proxmox_template_config.stdout_lines
+         and 'pgc' in (proxmox_template_config.stdout_lines | select('match', '^tags: ')
+                           | map('regex_replace', '^tags: ', '') | first | default('')).split(';') }}
+
+- name: Guard - template VM is absent or is our finished template - {{ pve_template_vmid }}
+  ansible.builtin.assert:
+    that:
+      - not proxmox_template_exists or proxmox_template_is_ours
+      - proxmox_template_genisoimage.stat.exists
+    fail_msg: >-
+      VM {{ pve_template_vmid }} already exists but is not our finished template '{{ proxmox_template_name }}'
+      (tag pgc, template: 1), or genisoimage is missing. Nothing was changed.
+      Inspect with 'qm config {{ pve_template_vmid }}' on {{ inventory_hostname }}.
+    quiet: true
+
+- name: Template already present
+  ansible.builtin.debug:
+    msg: "VM {{ pve_template_vmid }} is already our template on {{ inventory_hostname }}; nothing to do."
+  when: proxmox_template_is_ours
+
+- name: Build template
+  when: not proxmox_template_exists
+  block:
+    - name: Show the qm commands that will run on {{ inventory_hostname }}
+      ansible.builtin.debug:
+        msg: "{{ (proxmox_template_build_cmds + proxmox_template_finalize_cmds) | map('join', ' ') | list }}"
+
+    - name: Check for existing ISO and kickstart files
+      ansible.builtin.stat:
+        path: "{{ item }}"
+        get_checksum: "{{ item.endswith(almalinux_iso_name) }}"
+        checksum_algorithm: sha256
+      loop:
+        - "{{ pve_iso_dir }}/{{ almalinux_iso_name }}"
+        - "{{ proxmox_template_ks_dir }}"
+        - "{{ pve_iso_dir }}/{{ proxmox_template_ks_iso }}"
+      register: proxmox_template_files
+
+    - name: Guard - never overwrite existing files
+      ansible.builtin.assert:
+        that:
+          - not proxmox_template_files.results[0].stat.exists or
+            proxmox_template_files.results[0].stat.checksum == almalinux_iso_sha256
+          - not proxmox_template_files.results[1].stat.exists
+          - not proxmox_template_files.results[2].stat.exists
+        fail_msg: >-
+          Refusing to overwrite: an existing {{ almalinux_iso_name }} has a different checksum,
+          or {{ proxmox_template_ks_dir }} / {{ proxmox_template_ks_iso }} already exist. Nothing was changed.
+        quiet: true
+
+    - name: Download AlmaLinux DVD ISO (verified by sha256, only if absent)
+      ansible.builtin.get_url:
+        url: "{{ almalinux_iso_url }}"
+        dest: "{{ pve_iso_dir }}/{{ almalinux_iso_name }}"
+        checksum: "sha256:{{ almalinux_iso_sha256 }}"
+        mode: "0644"
+        timeout: 120
+      when: not proxmox_template_files.results[0].stat.exists
+
+    - name: Create kickstart directory
+      ansible.builtin.file:
+        path: "{{ proxmox_template_ks_dir }}"
+        state: directory
+        mode: "0700"
+
+    - name: Render kickstart
+      ansible.builtin.template:
+        src: ks.cfg.j2
+        dest: "{{ proxmox_template_ks_dir }}/ks.cfg"
+        mode: "0600"
+      register: proxmox_template_ks
+
+    - name: Build OEMDRV kickstart ISO
+      ansible.builtin.command:
+        argv: [genisoimage, -quiet, -output, "{{ pve_iso_dir }}/{{ proxmox_template_ks_iso }}",
+               -volid, OEMDRV, -joliet, -rational-rock, "{{ proxmox_template_ks_dir }}"]
+      changed_when: true
+
+    - name: Create VM and start the unattended install
+      ansible.builtin.command:
+        argv: "{{ item }}"
+      loop: "{{ proxmox_template_build_cmds }}"
+      changed_when: true
+
+    - name: Wait for the installer to power the VM off
+      ansible.builtin.command: qm status {{ pve_template_vmid }}
+      register: proxmox_template_status
+      until: "'status: stopped' in proxmox_template_status.stdout"
+      retries: "{{ (proxmox_template_install_timeout_min * 2) | int }}"
+      delay: 30
+      changed_when: false
+      when: not ansible_check_mode
+
+    - name: Detach install media, add cloud-init drive, convert to template
+      ansible.builtin.command:
+        argv: "{{ item }}"
+      loop: "{{ proxmox_template_finalize_cmds }}"
+      changed_when: true

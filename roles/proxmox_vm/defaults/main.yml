@@ -1,0 +1,3 @@
+---
+# Must match proxmox_template_name (proxmox_kvm needs a clone name even when cloning by vmid)
+proxmox_vm_template_name: tpl-alma10

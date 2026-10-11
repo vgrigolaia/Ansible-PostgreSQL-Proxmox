@@ -1,0 +1,22 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Prometheus {{ exporter_common_name }}
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User={{ exporter_common_name }}
+Group={{ exporter_common_name }}
+EnvironmentFile=-/etc/sysconfig/{{ exporter_common_name }}
+ExecStart=/usr/local/bin/{{ exporter_common_name }}{% for a in exporter_common_args %} \
+    {{ a }}{% endfor %}
+
+Restart=on-failure
+RestartSec=5s
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

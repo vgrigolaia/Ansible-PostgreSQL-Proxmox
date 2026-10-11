@@ -1,0 +1,4 @@
+---
+vm_id: 231
+vm_pve_node: pve01
+keepalived_priority: 100

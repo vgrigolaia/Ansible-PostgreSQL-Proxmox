@@ -1,0 +1,50 @@
+---
+# Runs on: workstation (localhost) against the Proxmox API.
+# Creates/updates the VMs of the current environment only. Never deletes or stops anything.
+
+- name: Assert environment settings are complete
+  ansible.builtin.assert:
+    that:
+      - pve_api_host | default('', true) | string | length > 0
+      - "'!' in pve_api_token_id"
+      - net_prefix | int > 0
+      - net_gateway | default('', true) | string | length > 0
+      - net_dns_servers | length > 0
+      - vm_cores | int > 0
+      - vm_memory_mb | int > 0
+      - vm_os_disk_gb | int > 0
+      - vm_pg_disks | map(attribute='size_gb') | select('none') | list | length == 0
+      - vm_ci_ssh_keys | length > 0
+    fail_msg: "Missing values in inventories/{{ pgc_env }} (network, sizing, disk sizes, API token or SSH keys)."
+    quiet: true
+
+- name: Look up template {{ pve_template_vmid }}
+  community.proxmox.proxmox_vm_info:
+    vmid: "{{ pve_template_vmid }}"
+    type: qemu
+    config: current
+  register: proxmox_vm_template
+
+- name: Assert the template exists and is a template - {{ pve_template_vmid }}
+  ansible.builtin.assert:
+    that:
+      - proxmox_vm_template.proxmox_vms | length == 1
+      - proxmox_vm_template.proxmox_vms[0].template | bool
+      - proxmox_vm_template.proxmox_vms[0].name == proxmox_vm_template_name
+      - "'pgc' in (proxmox_vm_template.proxmox_vms[0].config.tags | default('')).split(';')"
+    fail_msg: "Template {{ pve_template_vmid }} missing or not ours ({{ proxmox_vm_template_name }}, tag pgc). Run --tags template first."
+    quiet: true
+
+# Two passes: every VM is checked (read-only) before any VM is changed,
+# so a conflict on one VM can never leave another one half-modified.
+- name: Check every VM before changing anything
+  ansible.builtin.include_tasks: check.yml
+  loop: "{{ groups['pg_nodes'] }}"
+  loop_control:
+    loop_var: vm_host
+
+- name: Provision each VM
+  ansible.builtin.include_tasks: vm.yml
+  loop: "{{ groups['pg_nodes'] }}"
+  loop_control:
+    loop_var: vm_host

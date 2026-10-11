@@ -1,0 +1,10 @@
+# {{ ansible_managed }}
+[main]
+summary=PostgreSQL cluster node (virtual-guest + THP off)
+include=virtual-guest
+
+[vm]
+transparent_hugepages=never
+
+[sysctl]
+vm.swappiness={{ common_vm_swappiness }}

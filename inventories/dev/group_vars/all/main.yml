@@ -1,0 +1,41 @@
+---
+pgc_env: dev
+cluster_name: "pgc-{{ pgc_env }}"
+
+cluster_vip: "{{ pgc_environments[pgc_env].vip }}"
+keepalived_virtual_router_id: "{{ pgc_environments[pgc_env].keepalived_vrid }}"
+
+# VM sizing (per node)
+vm_cores: 2
+vm_memory_mb: 4096
+vm_os_disk_gb: 32
+
+# OS disk: /boot (1G, xfs) + VG "almalinux". The template ships small LVs; the OS baseline (--tags baseline)
+# grows the PV to vm_os_disk_gb and extends each LV to these sizes (never shrinks).
+vm_os_lvm:
+  - { lv: root, size_gb: 16, mount: / }
+  - { lv: var, size_gb: 8, mount: /var }
+  - { lv: home, size_gb: 2, mount: /home }
+  - { lv: swap, size_gb: 4, mount: swap }
+
+# Dedicated PostgreSQL disks (SCSI on RBD-Disk). Each disk: one PV -> VG -> single LV (100%FREE) -> xfs.
+# Found in the guest by their Proxmox serial (/dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_<serial>), not by sdX order.
+vm_pg_disks:
+  - name: pgdata
+    slot: scsi1
+    size_gb: 20
+    vg: vg_pgdata
+    lv: lv_pgdata
+    mount: /var/lib/pgsql
+  - name: pgwal
+    slot: scsi2
+    size_gb: 10
+    vg: vg_pgwal
+    lv: lv_pgwal
+    mount: /pgwal
+  - name: pgaudit
+    slot: scsi3
+    size_gb: 10
+    vg: vg_pgaudit
+    lv: lv_pgaudit
+    mount: /pg_audit_logs

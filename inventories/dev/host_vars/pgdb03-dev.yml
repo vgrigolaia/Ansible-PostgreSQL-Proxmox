@@ -1,0 +1,4 @@
+---
+vm_id: 233
+vm_pve_node: pve03
+keepalived_priority: 80

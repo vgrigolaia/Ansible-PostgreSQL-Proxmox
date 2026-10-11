@@ -1,0 +1,193 @@
+---
+# Runs on: pgdb0x-<env>
+# pgbouncer on every node, in front of the local PostgreSQL. The auth role and lookup function are created on the
+# current Patroni leader only; replicas receive them through replication.
+- name: Install pgbouncer
+  ansible.builtin.dnf:
+    name: pgbouncer
+    state: present
+
+- name: Read installed packages
+  ansible.builtin.package_facts:
+    manager: rpm
+
+- name: Configure pgbouncer
+  when: not ansible_check_mode or 'pgbouncer' in ansible_facts.packages
+  block:
+    - name: Find the Patroni leader
+      ansible.builtin.uri:
+        url: "http://{{ pgbouncer_node_ip }}:{{ pgbouncer_patroni_restapi_port }}/primary"
+        status_code: [200, 503]
+      register: pgbouncer_primary
+      check_mode: false
+
+    - name: Exactly one leader
+      ansible.builtin.assert:
+        that:
+          - ansible_play_hosts | map('extract', hostvars, ['pgbouncer_primary', 'status']) | select('equalto', 200) | list | length == 1
+        fail_msg: "Expected exactly one Patroni leader among {{ ansible_play_hosts }}."
+        quiet: true
+      run_once: true
+
+    - name: Auth role and lookup function (leader only)
+      when: pgbouncer_primary.status == 200
+      become: true
+      become_user: postgres
+      module_defaults:
+        group/community.postgresql.all:
+          login_unix_socket: /run/postgresql
+          login_db: "{{ pgbouncer_auth_dbname }}"
+      block:
+        - name: Auth role
+          community.postgresql.postgresql_user:
+            name: "{{ pgbouncer_auth_user }}"
+            password: "{{ vault_pgbouncer_auth_password }}"
+            role_attr_flags: LOGIN,NOSUPERUSER,NOCREATEDB,NOCREATEROLE,NOINHERIT
+          no_log: true
+          register: pgbouncer_db_role
+
+        - name: Schema pgbouncer
+          community.postgresql.postgresql_schema:
+            name: pgbouncer
+            owner: postgres
+          register: pgbouncer_db_schema
+
+        - name: Read the current lookup function
+          community.postgresql.postgresql_query:
+            query: >-
+              SELECT pg_get_functiondef(p.oid) AS def FROM pg_proc p
+              JOIN pg_namespace n ON n.oid = p.pronamespace
+              WHERE n.nspname = 'pgbouncer' AND p.proname = 'get_auth'
+          register: pgbouncer_fn_current
+          changed_when: false
+          check_mode: false
+
+        - name: Note whether the objects exist yet (check mode does not create them)
+          ansible.builtin.set_fact:
+            pgbouncer_db_pending: >-
+              {{ ansible_check_mode and (pgbouncer_db_role is changed or pgbouncer_db_schema is changed
+                 or pgbouncer_fn_current.query_result | length == 0) }}
+
+        - name: Lookup function (returns SCRAM secrets of non-superusers only)
+          community.postgresql.postgresql_query:
+            query: "{{ lookup('ansible.builtin.file', 'get_auth.sql') }}"
+          when:
+            - not pgbouncer_db_pending
+            - >-
+              pgbouncer_fn_current.query_result | length == 0 or
+              pgbouncer_fn_current.query_result[0].def is not search('-- pgc get_auth v1')
+
+        - name: Only the auth role may use the schema
+          community.postgresql.postgresql_privs:
+            type: schema
+            objs: pgbouncer
+            privs: USAGE
+            roles: "{{ item.role }}"
+            state: "{{ item.state }}"
+          loop:
+            - { role: PUBLIC, state: absent }
+            - { role: "{{ pgbouncer_auth_user }}", state: present }
+          when: not pgbouncer_db_pending
+
+        - name: Only the auth role may call the function
+          community.postgresql.postgresql_privs:
+            type: function
+            schema: pgbouncer
+            objs: get_auth(text)
+            privs: EXECUTE
+            roles: "{{ item.role }}"
+            state: "{{ item.state }}"
+          loop:
+            - { role: PUBLIC, state: absent }
+            - { role: "{{ pgbouncer_auth_user }}", state: present }
+          when: not pgbouncer_db_pending
+
+    # The package creates /run/pgbouncer as 0700, which keeps postgres away from the admin console socket.
+    # Same file name in /etc overrides /usr/lib/tmpfiles.d/pgbouncer.conf.
+    - name: Socket directory readable by local users (tmpfiles override)
+      ansible.builtin.copy:
+        dest: /etc/tmpfiles.d/pgbouncer.conf
+        content: |
+          d /run/pgbouncer 0755 pgbouncer pgbouncer -
+          d /home/pgbouncer 0700 pgbouncer pgbouncer -
+        mode: "0644"
+
+    - name: Socket directory permissions now
+      ansible.builtin.file:
+        path: /run/pgbouncer
+        state: directory
+        owner: pgbouncer
+        group: pgbouncer
+        mode: "0755"
+
+    - name: Systemd drop-in directory
+      ansible.builtin.file:
+        path: /etc/systemd/system/pgbouncer.service.d
+        state: directory
+        mode: "0755"
+
+    - name: Raise the open-files limit
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/pgbouncer.service.d/limits.conf
+        content: |
+          [Service]
+          LimitNOFILE={{ pgbouncer_nofile }}
+        mode: "0644"
+      notify: Restart pgbouncer
+
+    - name: Write pgbouncer.ini and the hba file
+      ansible.builtin.template:
+        src: "{{ item }}.j2"
+        dest: "/etc/pgbouncer/{{ item }}"
+        owner: root
+        group: pgbouncer
+        mode: "0640"
+      loop: [pgbouncer.ini, pgbouncer_hba.conf]
+      notify: Reload pgbouncer     # listen_addr/port changes need a restart: systemctl restart pgbouncer
+
+    - name: Write userlist.txt (auth user + admin users for peer)
+      ansible.builtin.template:
+        src: userlist.txt.j2
+        dest: /etc/pgbouncer/userlist.txt
+        owner: root
+        group: pgbouncer
+        mode: "0640"
+      diff: false     # contains a password
+      notify: Reload pgbouncer
+
+    - name: Enable and start pgbouncer
+      ansible.builtin.systemd_service:
+        name: pgbouncer
+        enabled: true
+        state: started
+        daemon_reload: true
+
+- name: Apply pending reloads before the checks
+  ansible.builtin.meta: flush_handlers
+
+- name: Wait for pgbouncer to listen
+  ansible.builtin.wait_for:
+    host: "{{ pgbouncer_node_ip }}"
+    port: "{{ pgbouncer_port }}"
+    timeout: 30
+  when: not ansible_check_mode
+
+- name: Login through pgbouncer (auth_query + SCRAM to PostgreSQL)
+  ansible.builtin.command: >-
+    /usr/pgsql-{{ postgresql_version }}/bin/psql -XAtq
+    "host=127.0.0.1 port={{ pgbouncer_port }} dbname={{ pgbouncer_auth_dbname }} user={{ pgbouncer_check_user }}"
+    -c "SELECT pg_is_in_recovery()"
+  environment:
+    PGPASSWORD: "{{ pgbouncer_check_password }}"
+  register: pgbouncer_login
+  changed_when: false
+  failed_when: pgbouncer_login.rc != 0 or pgbouncer_login.stdout not in ['t', 'f']
+  until: pgbouncer_login.rc == 0
+  retries: 10
+  delay: 3
+  when: not ansible_check_mode
+
+- name: Show the login result
+  ansible.builtin.debug:
+    msg: "pgbouncer OK, local PostgreSQL is {{ 'a replica' if pgbouncer_login.stdout == 't' else 'the primary' }}"
+  when: not ansible_check_mode

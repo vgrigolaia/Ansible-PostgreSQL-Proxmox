@@ -1,0 +1,20 @@
+---
+# Read-only: guards + plan for one VM. Runs for ALL VMs before any VM is changed.
+- name: Look up and guard - {{ vm_host }}
+  ansible.builtin.include_tasks: lookup.yml
+
+- name: Plan for {{ vm_host }}
+  ansible.builtin.debug:
+    msg:
+      - "VM {{ proxmox_vm_id }} {{ vm_host }}: {{ proxmox_vm_action }}"
+      - "node={{ proxmox_vm_node }} storage={{ pve_storage }} pool={{ pve_pool }} cpu={{ vm_cpu_type }} cores={{ vm_cores }} memory={{ vm_memory_mb }}MB"
+      - "ip={{ proxmox_vm_ip }}/{{ net_prefix }} gw={{ net_gateway }} dns={{ net_dns_servers | join(',') }} user={{ vm_ci_user }}"
+      - "controller={{ vm_scsihw }} disks: {{ vm_os_disk_slot }} OS {{ vm_os_disk_gb }}G; {{ proxmox_vm_disk_summary }}"
+  vars:
+    proxmox_vm_action: >-
+      {{ ('exists on ' ~ proxmox_vm_existing.proxmox_vms[0].node ~ ', will update config')
+         if proxmox_vm_existing.proxmox_vms else ('will full-clone from ' ~ pve_template_vmid) }}
+    proxmox_vm_disk_summary: >-
+      {{ vm_pg_disks | map(attribute='slot')
+         | zip(vm_pg_disks | map(attribute='name'), vm_pg_disks | map(attribute='size_gb'))
+         | map('join', ' ') | join('G; ') }}G

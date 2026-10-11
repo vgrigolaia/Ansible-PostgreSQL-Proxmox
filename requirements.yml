@@ -1,0 +1,14 @@
+---
+# Install: ansible-galaxy collection install -r requirements.yml -p ./collections
+# Versions checked against Galaxy on 2026-10-07.
+collections:
+  - name: community.proxmox
+    version: ">=2.1.0,<3.0.0"
+  - name: community.general
+    version: ">=13.5.0,<14.0.0"
+  - name: community.postgresql
+    version: ">=5.0.0,<6.0.0"
+  - name: community.crypto
+    version: ">=3.5.0,<4.0.0"
+  - name: ansible.posix
+    version: ">=2.2.2,<3.0.0"

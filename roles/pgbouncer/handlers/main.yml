@@ -1,0 +1,11 @@
+---
+- name: Reload pgbouncer
+  ansible.builtin.systemd_service:
+    name: pgbouncer
+    state: reloaded
+
+- name: Restart pgbouncer
+  ansible.builtin.systemd_service:
+    name: pgbouncer
+    state: restarted
+    daemon_reload: true

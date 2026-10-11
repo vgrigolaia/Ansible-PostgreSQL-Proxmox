@@ -1,0 +1,15 @@
+---
+# Runs on: pgdb0x-<env>
+- name: Install node_exporter
+  ansible.builtin.include_role:
+    name: exporter_common
+    tasks_from: install
+  vars:
+    exporter_common_name: node_exporter
+    exporter_common_version: "{{ node_exporter_version }}"
+    exporter_common_url: "{{ node_exporter_url }}"
+    exporter_common_sha256: "{{ node_exporter_sha256 }}"
+    exporter_common_args:
+      - "--web.listen-address={{ ansible_host }}:{{ node_exporter_port }}"
+      - --collector.systemd
+      - "--collector.systemd.unit-include={{ node_exporter_units }}"

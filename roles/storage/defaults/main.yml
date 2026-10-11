@@ -1,0 +1,7 @@
+---
+storage_os_vg: almalinux
+storage_mount_opts: defaults,noatime
+# SELinux file types for the PG mount points (/var/lib/pgsql is covered by the base policy)
+storage_selinux_types:
+  pgwal: postgresql_db_t
+  pgaudit: postgresql_log_t

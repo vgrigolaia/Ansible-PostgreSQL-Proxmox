@@ -1,0 +1,92 @@
+# {{ ansible_managed }}
+scope: {{ cluster_name }}
+namespace: /service/
+name: {{ inventory_hostname }}
+
+log:
+  level: INFO
+
+restapi:
+  listen: {{ patroni_node_ip }}:{{ patroni_restapi_port }}
+  connect_address: {{ patroni_node_ip }}:{{ patroni_restapi_port }}
+  authentication:          # required for unsafe endpoints (POST/PUT/PATCH/DELETE)
+    username: {{ patroni_restapi_user }}
+    password: "{{ vault_patroni_restapi_password }}"
+
+etcd3:
+  hosts:
+{% for h in groups['pg_nodes'] %}
+    - {{ hostvars[h].ansible_host }}:2379
+{% endfor %}
+  protocol: https
+  cacert: {{ patroni_tls_dir }}/ca.crt
+  cert: {{ patroni_tls_dir }}/client.crt
+  key: {{ patroni_tls_dir }}/client.key
+
+bootstrap:
+  dcs:
+    ttl: {{ patroni_ttl }}
+    loop_wait: {{ patroni_loop_wait }}
+    retry_timeout: {{ patroni_retry_timeout }}
+    maximum_lag_on_failover: {{ patroni_maximum_lag_on_failover }}
+    synchronous_mode: {{ patroni_synchronous_mode | bool | lower }}
+    postgresql:
+      use_pg_rewind: true
+      use_slots: true
+      parameters:
+{% for k, v in patroni_pg_parameters.items() %}
+        {{ k }}: "{{ v }}"
+{% endfor %}
+  initdb:
+    - encoding: UTF8
+    - locale: C.UTF-8
+    - data-checksums
+    - waldir: {{ patroni_wal_dir }}
+
+postgresql:
+  listen: {{ patroni_node_ip }},127.0.0.1:{{ patroni_pg_port }}
+  connect_address: {{ patroni_node_ip }}:{{ patroni_pg_port }}
+  data_dir: {{ patroni_data_dir }}
+  bin_dir: {{ patroni_bin_dir }}
+  pgpass: /var/lib/pgsql/.pgpass_patroni
+  # Replicas are cloned with pg_basebackup; without --waldir their WAL would stay on the data disk
+  basebackup:
+    - waldir: {{ patroni_wal_dir }}
+    - checkpoint: fast
+  authentication:
+    superuser:
+      username: {{ patroni_superuser }}
+      password: "{{ vault_postgres_superuser_password }}"
+    replication:
+      username: {{ patroni_replication_user }}
+      password: "{{ vault_replication_password }}"
+    rewind:
+      username: {{ patroni_rewind_user }}
+      password: "{{ vault_rewind_password }}"
+  parameters:
+    unix_socket_directories: /run/postgresql
+  pg_hba:
+    # Other environments: rejected first
+{% for ip in pgc_foreign_ips %}
+    - host all all {{ ip }}/32 reject
+    - host replication all {{ ip }}/32 reject
+{% endfor %}
+    - local all all peer
+    - host all all 127.0.0.1/32 scram-sha-256
+    # Patroni's local replication connection (replica timeline/LSN during switchover and failover)
+    - host replication {{ patroni_replication_user }} 127.0.0.1/32 scram-sha-256
+{% for ip in pgc_env_node_ips %}
+    - host replication {{ patroni_replication_user }} {{ ip }}/32 scram-sha-256
+    - host all all {{ ip }}/32 scram-sha-256
+{% endfor %}
+
+watchdog:
+  mode: {{ patroni_watchdog_mode }}          # use /dev/watchdog (softdog) when available
+  device: /dev/watchdog
+  safety_margin: 5
+
+tags:
+  nofailover: false
+  noloadbalance: false
+  clonefrom: false
+  nosync: false

@@ -1,0 +1,19 @@
+---
+# Runs on: workstation (writes the scrape config snippet into docs/prometheus/)
+- name: Output directory
+  ansible.builtin.file:
+    path: "{{ prometheus_targets_file | dirname }}"
+    state: directory
+    mode: "0755"
+  delegate_to: localhost
+  become: false
+  run_once: true
+
+- name: Write the Prometheus scrape config snippet
+  ansible.builtin.template:
+    src: scrape.yml.j2
+    dest: "{{ prometheus_targets_file }}"
+    mode: "0644"
+  delegate_to: localhost
+  become: false
+  run_once: true

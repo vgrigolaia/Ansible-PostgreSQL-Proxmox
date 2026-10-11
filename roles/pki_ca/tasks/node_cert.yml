@@ -1,0 +1,77 @@
+---
+# Issue a certificate for this node, signed by the environment CA.
+# The private key is generated on the node and never leaves it; only the CSR goes to the workstation.
+# Inputs:
+#   pki_ca_node_dir, pki_ca_node_name (file prefix), pki_ca_node_owner, pki_ca_node_group,
+#   pki_ca_node_cn, pki_ca_node_sans (list), pki_ca_node_eku (list)
+# Output fact: pki_ca_node_changed (true if key, cert or CA file changed)
+- name: Certificate directory - {{ pki_ca_node_dir }}
+  ansible.builtin.file:
+    path: "{{ pki_ca_node_dir }}"
+    state: directory
+    owner: root
+    group: "{{ pki_ca_node_group }}"
+    mode: "0750"
+
+- name: Private key - {{ pki_ca_node_name }}
+  community.crypto.openssl_privatekey:
+    path: "{{ pki_ca_node_dir }}/{{ pki_ca_node_name }}.key"
+    type: ECC
+    curve: secp256r1
+    owner: "{{ pki_ca_node_owner }}"
+    group: "{{ pki_ca_node_group }}"
+    mode: "0600"
+  register: pki_ca_node_key
+
+- name: Signing request - {{ pki_ca_node_name }}
+  community.crypto.openssl_csr_pipe:
+    privatekey_path: "{{ pki_ca_node_dir }}/{{ pki_ca_node_name }}.key"
+    common_name: "{{ pki_ca_node_cn }}"
+    subject_alt_name: "{{ pki_ca_node_sans }}"
+    extended_key_usage: "{{ pki_ca_node_eku }}"
+    key_usage: [digitalSignature, keyEncipherment]
+  register: pki_ca_node_csr
+  changed_when: false
+
+- name: Read current certificate - {{ pki_ca_node_name }}
+  ansible.builtin.slurp:
+    src: "{{ pki_ca_node_dir }}/{{ pki_ca_node_name }}.crt"
+  register: pki_ca_node_current
+  failed_when: false
+
+- name: Sign with the environment CA on the workstation - {{ pki_ca_node_name }}
+  community.crypto.x509_certificate_pipe:
+    content: "{{ (pki_ca_node_current.content | b64decode) if pki_ca_node_current.content is defined else omit }}"
+    csr_content: "{{ pki_ca_node_csr.csr }}"
+    provider: ownca
+    ownca_content: "{{ lookup('ansible.builtin.file', pki_ca_cert) }}"
+    ownca_privatekey_content: "{{ lookup('ansible.builtin.unvault', pki_ca_key) }}"
+    ownca_not_after: "+1825d"
+  delegate_to: localhost
+  become: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+  register: pki_ca_node_signed
+  no_log: true    # handles the CA private key
+
+- name: Install certificate - {{ pki_ca_node_name }}
+  ansible.builtin.copy:
+    content: "{{ pki_ca_node_signed.certificate }}"
+    dest: "{{ pki_ca_node_dir }}/{{ pki_ca_node_name }}.crt"
+    owner: root
+    group: "{{ pki_ca_node_group }}"
+    mode: "0644"
+  register: pki_ca_node_crt
+
+- name: Install CA certificate - {{ pki_ca_node_dir }}
+  ansible.builtin.copy:
+    src: "{{ pki_ca_cert }}"
+    dest: "{{ pki_ca_node_dir }}/ca.crt"
+    owner: root
+    group: "{{ pki_ca_node_group }}"
+    mode: "0644"
+  register: pki_ca_node_ca
+
+- name: Report whether anything changed - {{ pki_ca_node_name }}
+  ansible.builtin.set_fact:
+    pki_ca_node_changed: "{{ pki_ca_node_key is changed or pki_ca_node_crt is changed or pki_ca_node_ca is changed }}"

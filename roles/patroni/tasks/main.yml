@@ -1,0 +1,153 @@
+---
+# Runs on: pgdb0x-<env> (certificate signing step: workstation)
+# First run: bootstraps the cluster on the first node, then the others join as streaming replicas.
+- name: Install PostgreSQL, pgaudit and Patroni
+  ansible.builtin.dnf:
+    name: "{{ patroni_packages }}"
+    state: present
+  when: not epel_repo_pending | default(false)   # check mode: the EPEL repo is not written yet
+
+- name: Read installed packages
+  ansible.builtin.package_facts:
+    manager: rpm
+
+- name: Configure PostgreSQL and Patroni
+  when: not ansible_check_mode or ('patroni' in ansible_facts.packages and ('postgresql' ~ postgresql_version ~ '-server') in ansible_facts.packages)
+  block:
+    - name: Record whether patroni is already running
+      ansible.builtin.systemd_service:
+        name: patroni
+      register: patroni_unit
+      check_mode: false
+
+    - name: Mask the stock PostgreSQL unit (Patroni manages postgres)
+      ansible.builtin.systemd_service:
+        name: "postgresql-{{ postgresql_version }}"
+        enabled: false
+        masked: true
+
+    - name: Own the PostgreSQL mount points
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: directory
+        owner: postgres
+        group: postgres
+        mode: "{{ item.mode }}"
+      loop:
+        - { path: /var/lib/pgsql, mode: "0700" }
+        - { path: "/var/lib/pgsql/{{ postgresql_version }}", mode: "0700" }
+        - { path: /pgwal, mode: "0700" }
+        - { path: "/pgwal/{{ postgresql_version }}", mode: "0700" }
+        - { path: "{{ patroni_log_dir }}", mode: "0750" }
+
+    - name: Load the softdog watchdog at boot
+      ansible.builtin.copy:
+        content: "softdog\n"
+        dest: /etc/modules-load.d/softdog.conf
+        mode: "0644"
+
+    - name: Load the softdog watchdog now
+      community.general.modprobe:
+        name: softdog
+        state: present
+
+    - name: Let postgres (Patroni) use /dev/watchdog
+      ansible.builtin.copy:
+        content: 'KERNEL=="watchdog", OWNER="postgres", GROUP="postgres", MODE="0600"'
+        dest: /etc/udev/rules.d/61-watchdog.rules
+        mode: "0644"
+      register: patroni_udev
+
+    - name: Apply the watchdog udev rule   # noqa: no-handler  (must happen before Patroni first starts)
+      ansible.builtin.command: udevadm trigger --action=change --sysname-match=watchdog
+      changed_when: true
+      when: patroni_udev is changed
+
+    - name: Etcd client certificate for Patroni
+      ansible.builtin.include_role:
+        name: pki_ca
+        tasks_from: node_cert
+      vars:
+        pki_ca_name: etcd
+        pki_ca_node_dir: "{{ patroni_tls_dir }}"
+        pki_ca_node_name: client
+        pki_ca_node_owner: postgres
+        pki_ca_node_group: postgres
+        pki_ca_node_cn: "patroni-{{ inventory_hostname }}"
+        pki_ca_node_sans: ["DNS:{{ inventory_hostname }}", "IP:{{ patroni_node_ip }}"]
+        pki_ca_node_eku: [clientAuth]
+
+    - name: Write patroni.yml
+      ansible.builtin.template:
+        src: patroni.yml.j2
+        dest: "{{ patroni_conf_dir }}/patroni.yml"
+        owner: root
+        group: postgres
+        mode: "0640"
+        validate: /usr/bin/patroni --validate-config --ignore-listen-port %s   # ports are in use once Patroni runs
+      diff: false     # contains passwords
+      notify: Reload patroni
+
+    - name: Start Patroni on the first node (bootstraps the cluster)
+      ansible.builtin.systemd_service:
+        name: patroni
+        enabled: true
+        state: started
+      when: inventory_hostname == groups['pg_nodes'][0]
+
+    - name: Wait until PostgreSQL runs on the first node
+      ansible.builtin.uri:
+        url: "http://{{ patroni_node_ip }}:{{ patroni_restapi_port }}/health"
+        status_code: 200
+      register: patroni_health_first
+      until: patroni_health_first.status == 200
+      retries: 30
+      delay: 10
+      when: inventory_hostname == groups['pg_nodes'][0]
+
+    - name: Start Patroni on the other nodes (join as replicas)
+      ansible.builtin.systemd_service:
+        name: patroni
+        enabled: true
+        state: started
+      when: inventory_hostname != groups['pg_nodes'][0]
+
+    - name: Wait until PostgreSQL runs on the other nodes
+      ansible.builtin.uri:
+        url: "http://{{ patroni_node_ip }}:{{ patroni_restapi_port }}/health"
+        status_code: 200
+      register: patroni_health_rest
+      until: patroni_health_rest.status == 200
+      retries: 60
+      delay: 10
+      when: inventory_hostname != groups['pg_nodes'][0]
+
+- name: Apply pending reloads before the cluster check
+  ansible.builtin.meta: flush_handlers
+
+# A new replica reports "running" until its WAL receiver connects, then "streaming".
+- name: Wait for one Leader and streaming replicas
+  ansible.builtin.command: patronictl -c {{ patroni_conf_dir }}/patroni.yml list -f json
+  register: patroni_list
+  changed_when: false
+  until: >-
+    patroni_list.rc == 0 and
+    (patroni_list.stdout | from_json | selectattr('Role', 'equalto', 'Leader') | list | length) == 1 and
+    (patroni_list.stdout | from_json | selectattr('State', 'equalto', 'streaming') | list | length) == (groups['pg_nodes'] | length) - 1
+  retries: 30
+  delay: 10
+  run_once: true
+  when: not ansible_check_mode
+
+- name: Show cluster state
+  ansible.builtin.command: patronictl -c {{ patroni_conf_dir }}/patroni.yml list
+  register: patroni_table
+  changed_when: false
+  run_once: true
+  when: not ansible_check_mode
+
+- name: Print cluster state
+  ansible.builtin.debug:
+    msg: "{{ patroni_table.stdout_lines }}"
+  run_once: true
+  when: not ansible_check_mode

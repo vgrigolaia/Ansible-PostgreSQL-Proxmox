@@ -1,0 +1,107 @@
+---
+- name: Find the physical volume of VG {{ storage_os_vg }}
+  ansible.builtin.command: pvs --noheadings -o pv_name -S vg_name={{ storage_os_vg }}
+  register: storage_os_pvs
+  changed_when: false
+  check_mode: false
+
+- name: Derive OS disk and partition
+  ansible.builtin.set_fact:
+    storage_os_pv: "{{ storage_os_pvs.stdout | trim }}"
+    storage_os_disk: "{{ storage_os_pvs.stdout | trim | regex_replace('[0-9]+$', '') }}"
+    storage_os_partnum: "{{ storage_os_pvs.stdout | trim | regex_search('[0-9]+$') }}"
+
+- name: Assert a single PV for the OS VG (sdX on SCSI)
+  ansible.builtin.assert:
+    that:
+      - storage_os_pv is match('^/dev/sd[a-z][0-9]+$')
+    fail_msg: "Unexpected PV layout for VG {{ storage_os_vg }}: '{{ storage_os_pvs.stdout }}'"
+    quiet: true
+
+- name: Grow OS partition to the end of the disk
+  ansible.builtin.command: growpart {{ storage_os_disk }} {{ storage_os_partnum }}
+  register: storage_growpart
+  changed_when: "'CHANGED' in storage_growpart.stdout"
+  failed_when: storage_growpart.rc != 0 and 'NOCHANGE' not in storage_growpart.stdout
+
+- name: Resize the OS physical volume
+  community.general.lvg:
+    vg: "{{ storage_os_vg }}"
+    pvs: "{{ storage_os_pv }}"
+    pvresize: true
+
+- name: Read VG and LV sizes
+  ansible.builtin.command: >-
+    lvs --reportformat json --units b --nosuffix -o lv_name,lv_size,vg_size {{ storage_os_vg }}
+  register: storage_os_lvs
+  changed_when: false
+  check_mode: false
+
+- name: Compute current and target sizes
+  ansible.builtin.set_fact:
+    storage_os_current: "{{ (storage_os_lvs.stdout | from_json).report[0].lv | items2dict(key_name='lv_name', value_name='lv_size') }}"
+    storage_os_vg_bytes: "{{ (storage_os_lvs.stdout | from_json).report[0].lv[0].vg_size | int }}"
+    storage_os_target_bytes: "{{ (vm_os_lvm | map(attribute='size_gb') | sum) * 1073741824 }}"
+
+- name: Assert the target LV sizes fit into the VG
+  ansible.builtin.assert:
+    that:
+      - storage_os_target_bytes | int <= storage_os_vg_bytes | int
+    fail_msg: >-
+      vm_os_lvm needs {{ (storage_os_target_bytes | int / 1073741824) | round(1) }} GiB but VG {{ storage_os_vg }}
+      has {{ (storage_os_vg_bytes | int / 1073741824) | round(1) }} GiB (in check mode the PV is not grown yet).
+    quiet: true
+  when: not ansible_check_mode
+
+- name: Plan for OS logical volumes
+  ansible.builtin.debug:
+    msg: >-
+      {% for i in vm_os_lvm %}{{ i.lv }}: {{ ((storage_os_current[i.lv] | int) / 1073741824) | round(1) }}G -> {{ i.size_gb }}G{{
+      ' (grow)' if (storage_os_current[i.lv] | int) < i.size_gb * 1073741824 else ' (ok)' }}; {% endfor %}
+
+- name: Grow OS logical volumes (never shrink)
+  community.general.lvol:
+    vg: "{{ storage_os_vg }}"
+    lv: "{{ item.lv }}"
+    size: "{{ item.size_gb }}g"
+    resizefs: true
+    shrink: false
+  loop: "{{ vm_os_lvm | rejectattr('mount', 'equalto', 'swap') | list }}"
+  loop_control:
+    label: "{{ item.lv }} {{ item.mount }} -> {{ item.size_gb }}G"
+  when:
+    - not ansible_check_mode    # the PV is only grown for real, so LV growth cannot be simulated
+    - (storage_os_current[item.lv] | int) < (item.size_gb * 1073741824)
+
+- name: Grow swap (swapoff, extend, mkswap with the same UUID, swapon)
+  vars:
+    storage_swap: "{{ vm_os_lvm | selectattr('mount', 'equalto', 'swap') | first }}"
+    storage_swap_dev: "/dev/{{ storage_os_vg }}/{{ storage_swap.lv }}"
+  when:
+    - vm_os_lvm | selectattr('mount', 'equalto', 'swap') | list | length == 1
+    - (storage_os_current[storage_swap.lv] | int) < (storage_swap.size_gb * 1073741824)
+    - not ansible_check_mode
+  block:
+    - name: Read swap UUID
+      ansible.builtin.command: blkid -s UUID -o value {{ storage_swap_dev }}
+      register: storage_swap_uuid
+      changed_when: false
+
+    - name: Disable swap
+      ansible.builtin.command: swapoff {{ storage_swap_dev }}
+      changed_when: true
+
+    - name: Extend swap LV
+      community.general.lvol:
+        vg: "{{ storage_os_vg }}"
+        lv: "{{ storage_swap.lv }}"
+        size: "{{ storage_swap.size_gb }}g"
+        shrink: false
+
+    - name: Recreate swap signature with the same UUID
+      ansible.builtin.command: mkswap -U {{ storage_swap_uuid.stdout | trim }} {{ storage_swap_dev }}
+      changed_when: true
+
+    - name: Enable swap
+      ansible.builtin.command: swapon {{ storage_swap_dev }}
+      changed_when: true

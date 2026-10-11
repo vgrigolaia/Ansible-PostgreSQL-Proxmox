@@ -1,0 +1,20 @@
+---
+# AlmaLinux 10 template: OS disk on VirtIO SCSI single, LVM split, cloud-init
+proxmox_template_name: tpl-alma10
+proxmox_template_cores: 2
+proxmox_template_memory_mb: 4096
+proxmox_template_disk_gb: 20
+# Template LVs are deliberately small; the OS baseline grows them per env (vm_os_lvm).
+proxmox_template_boot_mb: 1024
+proxmox_template_lvm:
+  - { name: root, mount: /, size_mb: 8192 }
+  - { name: var, mount: /var, size_mb: 4096 }
+  - { name: home, mount: /home, size_mb: 1024 }
+  - { name: swap, mount: swap, size_mb: 2048 }
+
+# The OS disk ({{ vm_os_disk_slot }}) as the installer sees it: first SCSI disk. The CD-ROMs are on IDE (sr0, sr1).
+proxmox_template_os_dev: sda
+proxmox_template_ks_dir: "/root/pgc-ks-{{ pve_template_vmid }}"
+proxmox_template_ks_iso: "pgc-ks-{{ pve_template_vmid }}.iso"
+# Unattended DVD install incl. media check usually takes 15-30 min
+proxmox_template_install_timeout_min: 60

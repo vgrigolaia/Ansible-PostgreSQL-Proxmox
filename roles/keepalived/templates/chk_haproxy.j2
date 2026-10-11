@@ -1,0 +1,4 @@
+#!/bin/sh
+# {{ ansible_managed }}
+# Healthy when the local HAProxy answers its monitor URI.
+exec /usr/bin/curl -fsS -o /dev/null --max-time 2 {{ keepalived_check_url }}

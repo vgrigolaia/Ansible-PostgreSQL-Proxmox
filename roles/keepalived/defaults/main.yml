@@ -1,0 +1,15 @@
+---
+keepalived_vip: "{{ cluster_vip }}"
+keepalived_vip_prefix: "{{ net_prefix }}"
+keepalived_vrid: "{{ pgc_environments[pgc_env].keepalived_vrid }}"
+keepalived_interface: "{{ ansible_facts.default_ipv4.interface }}"
+keepalived_node_ip: "{{ ansible_host }}"
+# pg01 150, pg02 140, pg03 130. All start as BACKUP with nopreempt: the VIP stays where it is until that node fails.
+keepalived_priority: "{{ 150 - (groups['pg_nodes'].index(inventory_hostname) * 10) }}"
+keepalived_advert_int: 1
+keepalived_check_url: "http://127.0.0.1:8404/health"   # HAProxy monitor-uri
+keepalived_check_script: /usr/libexec/pgc/chk_haproxy
+
+# End-to-end check through the VIP; Patroni's non-superuser rewind role (a non-superuser that always exists)
+keepalived_check_user: rewind_user
+keepalived_check_password: "{{ vault_rewind_password }}"

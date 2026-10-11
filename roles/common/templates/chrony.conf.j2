@@ -1,0 +1,12 @@
+# {{ ansible_managed }}
+{% for s in ntp_servers %}
+server {{ s }} iburst
+{% endfor %}
+sourcedir /run/chrony-dhcp
+driftfile /var/lib/chrony/drift
+makestep 1.0 3
+rtcsync
+keyfile /etc/chrony.keys
+ntsdumpdir /var/lib/chrony
+leapseclist /usr/share/zoneinfo/leap-seconds.list
+logdir /var/log/chrony

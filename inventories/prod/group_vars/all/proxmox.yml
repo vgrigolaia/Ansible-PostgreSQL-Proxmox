@@ -1,0 +1,28 @@
+---
+# Proxmox VE 9
+pve_api_host: 10.50.200.11   # pve01
+pve_api_validate_certs: false
+pve_api_token_id: "{{ vault_pve_api_token_id }}"
+pve_api_token_secret: "{{ vault_pve_api_token_secret }}"
+
+# The template is built once on pve_template_node and shared by dev and prod
+pve_template_vmid: 9000
+pve_template_node: pve01
+pve_storage: RBD-Disk                  # Ceph RBD: VM disks
+pve_iso_storage: cephfs                # CephFS, shared by all nodes: DVD ISO + kickstart ISO
+pve_iso_dir: /mnt/pve/cephfs/template/iso
+
+# AlmaLinux 10 requires x86-64-v3
+vm_cpu_type: x86-64-v3
+# Disk bus: every disk on SCSI behind one VirtIO SCSI single controller (one controller per disk, own iothread).
+vm_scsihw: virtio-scsi-single
+vm_os_disk_slot: scsi0
+pve_pool: postgresql-pool              # one pool for the template and all dev + prod VMs
+
+# cloud-init login user: SSH is key-only, the password is for console login
+vm_ci_user: ansible
+vm_ci_password: "{{ vault_vm_ci_password }}"
+# Public key(s) installed for vm_ci_user; defaults to the workstation user's ed25519 key
+vm_ci_ssh_pubkey_file: "{{ lookup('ansible.builtin.env', 'HOME') }}/.ssh/id_ed25519.pub"
+vm_ci_ssh_keys:
+  - "{{ lookup('ansible.builtin.file', vm_ci_ssh_pubkey_file) }}"

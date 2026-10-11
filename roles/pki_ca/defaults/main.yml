@@ -1,0 +1,9 @@
+---
+# One CA per environment and purpose. Public cert committed as-is; private key committed vault-encrypted.
+pki_ca_name: etcd
+pki_ca_dir: "{{ playbook_dir }}/../inventories/{{ pgc_env }}/pki"
+pki_ca_cert: "{{ pki_ca_dir }}/{{ pki_ca_name }}-ca.crt"
+pki_ca_key: "{{ pki_ca_dir }}/{{ pki_ca_name }}-ca.key"      # ansible-vault encrypted
+pki_ca_common_name: "pgc-{{ pgc_env }} {{ pki_ca_name }} CA"
+pki_ca_valid_days: 3650
+pki_ca_vault_id: "{{ pgc_env }}@{{ lookup('env', 'HOME') }}/.ansible/vault/pgc-{{ pgc_env }}"

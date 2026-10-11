@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- {{ ansible_managed }} -->
+<zone target="DROP">
+  <short>{{ firewall_zone }}</short>
+  <description>pgc {{ pgc_env }}: default DROP, explicit sources only.</description>
+  <!-- Other environments: rejected before anything else -->
+{% for ip in pgc_foreign_ips %}
+  <rule priority="-100" family="ipv4"><source address="{{ ip }}"/><reject/></rule>
+{% endfor %}
+  <!-- Admin networks -->
+{% for cidr in admin_cidrs %}
+{% for p in (firewall_admin_tcp_ports + firewall_client_tcp_ports) | unique %}
+  <rule family="ipv4"><source address="{{ cidr }}"/><port port="{{ p }}" protocol="tcp"/><accept/></rule>
+{% endfor %}
+  <rule family="ipv4"><source address="{{ cidr }}"/><protocol value="icmp"/><accept/></rule>
+{% endfor %}
+  <!-- Application networks -->
+{% for cidr in app_cidrs %}
+{% for p in firewall_client_tcp_ports %}
+  <rule family="ipv4"><source address="{{ cidr }}"/><port port="{{ p }}" protocol="tcp"/><accept/></rule>
+{% endfor %}
+{% endfor %}
+  <!-- Cluster peers of {{ pgc_env }} -->
+{% for ip in pgc_env_node_ips %}
+{% for p in (firewall_cluster_tcp_ports + firewall_client_tcp_ports) | unique %}
+  <rule family="ipv4"><source address="{{ ip }}"/><port port="{{ p }}" protocol="tcp"/><accept/></rule>
+{% endfor %}
+  <rule family="ipv4"><source address="{{ ip }}"/><protocol value="vrrp"/><accept/></rule>
+  <rule family="ipv4"><source address="{{ ip }}"/><protocol value="icmp"/><accept/></rule>
+{% endfor %}
+  <!-- Prometheus -->
+{% for p in firewall_monitoring_tcp_ports %}
+  <rule family="ipv4"><source address="{{ prometheus_server_ip }}"/><port port="{{ p }}" protocol="tcp"/><accept/></rule>
+{% endfor %}
+  <rule family="ipv4"><source address="{{ prometheus_server_ip }}"/><protocol value="icmp"/><accept/></rule>
+</zone>

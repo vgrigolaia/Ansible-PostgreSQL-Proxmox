@@ -1,0 +1,30 @@
+# {{ ansible_managed }}
+# Environment file for etcd.service (PGDG package). etcd {{ etcd_version }}: v2 API removed, v3 only.
+ETCD_NAME={{ inventory_hostname }}
+ETCD_DATA_DIR={{ etcd_data_dir }}
+
+ETCD_LISTEN_PEER_URLS=https://{{ etcd_node_ip }}:{{ etcd_peer_port }}
+ETCD_LISTEN_CLIENT_URLS=https://{{ etcd_node_ip }}:{{ etcd_client_port }},https://127.0.0.1:{{ etcd_client_port }}
+ETCD_LISTEN_METRICS_URLS=http://{{ etcd_node_ip }}:{{ etcd_metrics_port }}
+ETCD_ADVERTISE_CLIENT_URLS=https://{{ etcd_node_ip }}:{{ etcd_client_port }}
+ETCD_INITIAL_ADVERTISE_PEER_URLS=https://{{ etcd_node_ip }}:{{ etcd_peer_port }}
+
+# Only used when the data dir is empty (first bootstrap); ignored afterwards.
+ETCD_INITIAL_CLUSTER={% for h in groups['pg_nodes'] %}{{ h }}=https://{{ hostvars[h].ansible_host }}:{{ etcd_peer_port }}{{ ',' if not loop.last else '' }}{% endfor %}
+
+ETCD_INITIAL_CLUSTER_TOKEN={{ etcd_cluster_token }}
+ETCD_INITIAL_CLUSTER_STATE=new
+
+# TLS: clients and peers must present a certificate signed by this environment's CA
+ETCD_TRUSTED_CA_FILE={{ etcd_tls_dir }}/ca.crt
+ETCD_CERT_FILE={{ etcd_tls_dir }}/node.crt
+ETCD_KEY_FILE={{ etcd_tls_dir }}/node.key
+ETCD_CLIENT_CERT_AUTH=true
+ETCD_PEER_TRUSTED_CA_FILE={{ etcd_tls_dir }}/ca.crt
+ETCD_PEER_CERT_FILE={{ etcd_tls_dir }}/node.crt
+ETCD_PEER_KEY_FILE={{ etcd_tls_dir }}/node.key
+ETCD_PEER_CLIENT_CERT_AUTH=true
+
+ETCD_AUTO_COMPACTION_MODE=periodic
+ETCD_AUTO_COMPACTION_RETENTION={{ etcd_auto_compaction_retention }}
+ETCD_LOG_LEVEL=info

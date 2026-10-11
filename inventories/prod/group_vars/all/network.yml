@@ -1,0 +1,17 @@
+---
+net_prefix: 24
+net_gateway: 10.50.200.1
+net_dns_servers:
+  - 1.1.1.1
+net_search_domain:     # optional, none given
+net_bridge: vmbr0
+net_vlan_tag:          # empty = untagged
+
+# Sources allowed to reach client/admin ports
+admin_cidrs:           # SSH, 5000/5001/6432, HAProxy stats
+  - 10.119.10.0/24     # remote admin network
+app_cidrs: []          # 5000/5001/6432 for application servers; add them here
+
+# Time: empty list = keep the AlmaLinux default pool in /etc/chrony.conf
+ntp_servers: []
+os_timezone: UTC

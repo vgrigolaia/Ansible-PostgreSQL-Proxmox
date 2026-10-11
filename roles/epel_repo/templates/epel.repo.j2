@@ -1,0 +1,11 @@
+# {{ ansible_managed }}
+# EPEL restricted to the packages listed in includepkgs.
+
+[epel-pgc]
+name=EPEL $releasever_major.$releasever_minor (restricted) - $basearch
+baseurl={{ epel_repo_base_url }}/$releasever_major.$releasever_minor/Everything/$basearch/
+enabled=1
+includepkgs={{ epel_repo_includepkgs }}
+gpgcheck=1
+gpgkey=file://{{ epel_repo_key_path }}
+priority=50

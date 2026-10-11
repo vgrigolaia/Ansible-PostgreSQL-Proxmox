@@ -1,0 +1,16 @@
+---
+# Runs on: workstation only (no remote hosts). Creates the per-environment CAs once.
+#   ansible-playbook -i inventories/<env> --vault-id <env>@~/.ansible/vault/pgc-<env> playbooks/pki.yml
+# Then commit inventories/<env>/pki/ (the .key file is vault-encrypted).
+- name: Per-environment certificate authorities
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+  tasks:
+    - name: Etcd CA
+      ansible.builtin.include_role:
+        name: pki_ca
+      vars:
+        pki_ca_name: etcd

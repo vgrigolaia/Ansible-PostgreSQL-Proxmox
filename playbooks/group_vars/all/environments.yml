@@ -1,0 +1,34 @@
+---
+# Registry of every environment. Each env reads its own entry and derives the
+# deny lists for all *other* envs from here (firewalld, pg_hba, pgbouncer hba).
+# Inventory host IPs are asserted against this registry before any change.
+# VM IDs follow the last octet of the node IP.
+pgc_environments:
+  dev:
+    nodes:
+      pgdb01-dev: 10.50.200.231
+      pgdb02-dev: 10.50.200.232
+      pgdb03-dev: 10.50.200.233
+    vip: 10.50.200.234
+    keepalived_vrid: 231
+    vm_ids: [231, 232, 233]
+  prod:
+    nodes:
+      pgdb01-prod: 10.50.200.235
+      pgdb02-prod: 10.50.200.236
+      pgdb03-prod: 10.50.200.237
+    vip: 10.50.200.238
+    keepalived_vrid: 235
+    vm_ids: [235, 236, 237]
+
+pgc_env_node_ips: "{{ pgc_environments[pgc_env].nodes.values() | list }}"
+_pgc_foreign_envs: "{{ pgc_environments | dict2items | rejectattr('key', 'equalto', pgc_env) | map(attribute='value') | list }}"
+# Node IPs + VIPs of every other environment
+pgc_foreign_ips: >-
+  {{ (_pgc_foreign_envs | map(attribute='nodes') | map('dict2items') | flatten | map(attribute='value') | list)
+     + (_pgc_foreign_envs | map(attribute='vip') | list) }}
+
+# Addresses that must never be assigned to a cluster node (preflight refuses them)
+pgc_reserved_ips: []
+
+prometheus_server_ip: 10.45.66.120

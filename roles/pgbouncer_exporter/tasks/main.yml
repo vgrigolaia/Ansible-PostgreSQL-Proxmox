@@ -1,0 +1,17 @@
+---
+# Runs on: pgdb0x-<env>
+# Reads SHOW STATS/POOLS from the local pgbouncer admin console as a stats user.
+- name: Install pgbouncer_exporter
+  ansible.builtin.include_role:
+    name: exporter_common
+    tasks_from: install
+  vars:
+    exporter_common_name: pgbouncer_exporter
+    exporter_common_version: "{{ pgbouncer_exporter_version }}"
+    exporter_common_url: "{{ pgbouncer_exporter_url }}"
+    exporter_common_sha256: "{{ pgbouncer_exporter_sha256 }}"
+    exporter_common_args:
+      - "--web.listen-address={{ ansible_host }}:{{ pgbouncer_exporter_port }}"
+    exporter_common_env:
+      PGBOUNCER_EXPORTER_CONNECTION_STRING: >-
+        postgres://{{ pgbouncer_exporter_user }}:{{ vault_monitoring_password }}@127.0.0.1:6432/pgbouncer?sslmode=disable

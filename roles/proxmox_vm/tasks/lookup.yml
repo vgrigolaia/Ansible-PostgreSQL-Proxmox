@@ -1,0 +1,48 @@
+---
+# Facts, ownership guards and current state for one VM (vm_host). Read-only.
+- name: Set facts for {{ vm_host }}
+  ansible.builtin.set_fact:
+    proxmox_vm_id: "{{ hostvars[vm_host].vm_id | int }}"
+    proxmox_vm_node: "{{ hostvars[vm_host].vm_pve_node }}"
+    proxmox_vm_ip: "{{ hostvars[vm_host].ansible_host }}"
+
+- name: Guard - VM ID belongs to this environment - {{ vm_host }}
+  ansible.builtin.assert:
+    that:
+      - proxmox_vm_id | int in pgc_environments[pgc_env].vm_ids
+      - proxmox_vm_id | int != pve_template_vmid
+    fail_msg: "VM ID {{ proxmox_vm_id }} is not a {{ pgc_env }} VM ID; refusing to touch it."
+    quiet: true
+
+- name: Look up VM {{ proxmox_vm_id }}
+  community.proxmox.proxmox_vm_info:
+    vmid: "{{ proxmox_vm_id | int }}"
+    config: current
+  register: proxmox_vm_existing
+
+- name: Guard - an existing VM with this ID must be our {{ vm_host }}
+  ansible.builtin.assert:
+    that:
+      - proxmox_vm_existing.proxmox_vms | length == 0 or
+        (proxmox_vm_existing.proxmox_vms[0].name == vm_host
+         and proxmox_vm_existing.proxmox_vms[0].type == 'qemu'
+         and 'pgc' in (proxmox_vm_existing.proxmox_vms[0].config.tags | default('')).split(';'))
+    fail_msg: >-
+      VM {{ proxmox_vm_id }} already exists ('{{ proxmox_vm_existing.proxmox_vms[0].name | default('?') }}')
+      but is not our {{ vm_host }} with tag 'pgc'. Refusing to modify it. Nothing was changed.
+    quiet: true
+
+# A VM whose disks sit on another bus (e.g. virtio0..3) would get a second, empty set of disks if the
+# configured slots were added, so such a VM is left alone and the play stops.
+- name: Guard - an existing VM must already use the configured disk layout - {{ vm_host }}
+  ansible.builtin.assert:
+    that:
+      - proxmox_vm_existing.proxmox_vms | length == 0 or
+        (vm_os_disk_slot in proxmox_vm_existing.proxmox_vms[0].config
+         and (proxmox_vm_existing.proxmox_vms[0].config.keys() | select('match', '^virtio[0-9]+$') | list | length) == 0)
+    fail_msg: >-
+      VM {{ proxmox_vm_id }} ({{ vm_host }}) exists with a different disk layout:
+      {{ proxmox_vm_existing.proxmox_vms[0].config.keys() | default([]) | select('match', '^(virtio|scsi|sata)[0-9]+$') | sort | join(', ') }}
+      instead of {{ vm_os_disk_slot }} + {{ vm_pg_disks | map(attribute='slot') | join(', ') }} on {{ vm_scsihw }}.
+      Converting a VM's disk bus is a manual, planned operation. Nothing was changed.
+    quiet: true

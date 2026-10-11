@@ -1,0 +1,9 @@
+#!/bin/sh
+# {{ ansible_managed }}
+# etcdctl with this node's TLS identity. Example: sudo /usr/local/bin/etcdctl-pgc endpoint health --cluster
+exec /usr/bin/etcdctl \
+  --endpoints={% for h in groups['pg_nodes'] %}https://{{ hostvars[h].ansible_host }}:{{ etcd_client_port }}{{ ',' if not loop.last else '' }}{% endfor %} \
+  --cacert={{ etcd_tls_dir }}/ca.crt \
+  --cert={{ etcd_tls_dir }}/node.crt \
+  --key={{ etcd_tls_dir }}/node.key \
+  "$@"

@@ -1,0 +1,29 @@
+---
+proxmox_template_net0: "virtio,bridge={{ net_bridge }}{{ (',tag=' ~ net_vlan_tag) if net_vlan_tag else '' }}"
+
+proxmox_template_build_cmds:
+  - [qm, create, "{{ pve_template_vmid }}",
+     --name, "{{ proxmox_template_name }}",
+     --pool, "{{ pve_pool }}",
+     --ostype, l26,
+     --machine, q35,
+     --cpu, "{{ vm_cpu_type }}",
+     --cores, "{{ proxmox_template_cores }}",
+     --memory, "{{ proxmox_template_memory_mb }}",
+     --net0, "{{ proxmox_template_net0 }}",
+     --scsihw, "{{ vm_scsihw }}",
+     "--{{ vm_os_disk_slot }}", "{{ pve_storage }}:{{ proxmox_template_disk_gb }},discard=on,iothread=1",
+     --ide2, "{{ pve_iso_storage }}:iso/{{ almalinux_iso_name }},media=cdrom",
+     --ide0, "{{ pve_iso_storage }}:iso/{{ proxmox_template_ks_iso }},media=cdrom",
+     --boot, "order={{ vm_os_disk_slot }};ide2",
+     --agent, enabled=1,
+     --serial0, socket,
+     --tags, "pgc;template",
+     --description, "pgc AlmaLinux 10 template, built by Ansible (proxmox_template role)"]
+  - [qm, start, "{{ pve_template_vmid }}"]
+
+proxmox_template_finalize_cmds:
+  - [qm, set, "{{ pve_template_vmid }}", --delete, ide0]
+  - [qm, set, "{{ pve_template_vmid }}", --ide2, "{{ pve_storage }}:cloudinit"]
+  - [qm, set, "{{ pve_template_vmid }}", --boot, "order={{ vm_os_disk_slot }}"]
+  - [qm, template, "{{ pve_template_vmid }}"]

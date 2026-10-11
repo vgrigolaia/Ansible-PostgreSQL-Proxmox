@@ -1,0 +1,36 @@
+---
+# Runs on: pgdb0x-<env>
+# Writes our own PGDG .repo file (same URLs as PGDG's pgdg-redhat-repo RPM, which is itself unsigned)
+# and imports the signing key pinned to its fingerprint. All packages stay gpg-checked.
+
+- name: Download the PGDG signing key
+  ansible.builtin.get_url:
+    url: "{{ pgdg_repo_key_url }}"
+    dest: "{{ pgdg_repo_key_path }}"
+    mode: "0644"
+
+- name: Import the PGDG key (fingerprint pinned)
+  ansible.builtin.rpm_key:
+    key: "{{ pgdg_repo_key_path }}"
+    fingerprint: "{{ pgdg_repo_key_fingerprint }}"
+    state: present
+  when: not ansible_check_mode
+
+- name: Write PGDG repo file
+  ansible.builtin.template:
+    src: pgdg.repo.j2
+    dest: /etc/yum.repos.d/pgdg-pgc.repo
+    mode: "0644"
+
+- name: Refresh metadata and verify the repositories resolve (accepts the pinned key for repo metadata)
+  ansible.builtin.command: >-
+    dnf -y -q --refresh repoquery --latest-limit 1
+    postgresql{{ postgresql_version }}-server patroni pgbouncer etcd
+  register: pgdg_repo_query
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: Show available versions
+  ansible.builtin.debug:
+    msg: "{{ pgdg_repo_query.stdout_lines }}"
+  when: not ansible_check_mode

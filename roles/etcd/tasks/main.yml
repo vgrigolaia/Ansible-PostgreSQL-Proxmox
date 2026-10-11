@@ -1,0 +1,165 @@
+---
+# Runs on: pgdb0x-<env> (signing step: workstation)
+- name: Assert the environment CA exists (run playbooks/pki.yml first)
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop: ["{{ etcd_ca_cert }}", "{{ etcd_ca_key }}"]
+  delegate_to: localhost
+  become: false
+  run_once: true
+  register: etcd_ca_files
+
+- name: Fail if the CA is missing
+  ansible.builtin.assert:
+    that: etcd_ca_files.results | map(attribute='stat.exists') | min
+    fail_msg: "CA files missing in inventories/{{ pgc_env }}/pki/. Run playbooks/pki.yml first."
+    quiet: true
+  run_once: true
+
+- name: Install etcd and python3-cryptography
+  ansible.builtin.dnf:
+    name:
+      - "etcd-{{ etcd_version }}"
+      - python3-cryptography
+    state: present
+
+- name: Read installed packages
+  ansible.builtin.package_facts:
+    manager: rpm
+
+- name: Configure etcd
+  when: not ansible_check_mode or ('etcd' in ansible_facts.packages and 'python3-cryptography' in ansible_facts.packages)
+  block:
+    - name: Record whether etcd is already running (decides restart vs. first bootstrap)
+      ansible.builtin.systemd_service:
+        name: etcd
+      register: etcd_unit
+      check_mode: false
+
+    - name: Create TLS directory
+      ansible.builtin.file:
+        path: "{{ etcd_tls_dir }}"
+        state: directory
+        owner: root
+        group: etcd
+        mode: "0750"
+
+    - name: Generate node private key (never leaves the node)
+      community.crypto.openssl_privatekey:
+        path: "{{ etcd_tls_dir }}/node.key"
+        type: ECC
+        curve: secp256r1
+        owner: etcd
+        group: etcd
+        mode: "0600"
+      notify: Restart etcd
+
+    - name: Create certificate signing request
+      community.crypto.openssl_csr_pipe:
+        privatekey_path: "{{ etcd_tls_dir }}/node.key"
+        common_name: "{{ inventory_hostname }}"
+        subject_alt_name:
+          - "DNS:{{ inventory_hostname }}"
+          - "DNS:localhost"
+          - "IP:{{ etcd_node_ip }}"
+          - "IP:127.0.0.1"
+        extended_key_usage: [serverAuth, clientAuth]
+        key_usage: [digitalSignature, keyEncipherment]
+      register: etcd_csr
+      changed_when: false
+
+    - name: Read current node certificate
+      ansible.builtin.slurp:
+        src: "{{ etcd_tls_dir }}/node.crt"
+      register: etcd_current_cert
+      failed_when: false
+
+    - name: Sign node certificate with the environment CA (on the workstation)
+      community.crypto.x509_certificate_pipe:
+        content: "{{ (etcd_current_cert.content | b64decode) if etcd_current_cert.content is defined else omit }}"
+        csr_content: "{{ etcd_csr.csr }}"
+        provider: ownca
+        ownca_content: "{{ lookup('ansible.builtin.file', etcd_ca_cert) }}"
+        ownca_privatekey_content: "{{ lookup('ansible.builtin.unvault', etcd_ca_key) }}"
+        ownca_not_after: "+{{ etcd_node_cert_valid_days }}d"
+      delegate_to: localhost
+      become: false
+      vars:
+        ansible_python_interpreter: "{{ ansible_playbook_python }}"
+      register: etcd_signed
+      no_log: true    # handles the CA private key
+
+    - name: Install node certificate
+      ansible.builtin.copy:
+        content: "{{ etcd_signed.certificate }}"
+        dest: "{{ etcd_tls_dir }}/node.crt"
+        owner: root
+        group: etcd
+        mode: "0644"
+      notify: Restart etcd
+
+    - name: Install CA certificate
+      ansible.builtin.copy:
+        src: "{{ etcd_ca_cert }}"
+        dest: "{{ etcd_tls_dir }}/ca.crt"
+        owner: root
+        group: etcd
+        mode: "0644"
+      notify: Restart etcd
+
+    - name: Write etcd environment file
+      ansible.builtin.template:
+        src: etcd.conf.j2
+        dest: /etc/etcd/etcd.conf
+        owner: root
+        group: etcd
+        mode: "0640"
+        backup: true
+      notify: Restart etcd
+
+    - name: Install etcdctl wrapper with this node's TLS identity
+      ansible.builtin.template:
+        src: etcdctl-pgc.j2
+        dest: /usr/local/bin/etcdctl-pgc
+        owner: root
+        group: root
+        mode: "0750"
+
+    - name: Start etcd on all members together (first start waits for quorum)
+      ansible.builtin.systemd_service:
+        name: etcd
+        enabled: true
+        state: started
+
+- name: Apply pending restarts before the health check
+  ansible.builtin.meta: flush_handlers
+
+- name: Check cluster health
+  ansible.builtin.command: /usr/local/bin/etcdctl-pgc endpoint health --cluster -w table
+  register: etcd_health
+  changed_when: false
+  run_once: true
+  when: not ansible_check_mode
+
+- name: List members
+  ansible.builtin.command: /usr/local/bin/etcdctl-pgc member list -w table
+  register: etcd_members
+  changed_when: false
+  run_once: true
+  when: not ansible_check_mode
+
+- name: Show cluster state
+  ansible.builtin.debug:
+    msg: "{{ etcd_health.stdout_lines + etcd_members.stdout_lines }}"
+  run_once: true
+  when: not ansible_check_mode
+
+- name: Assert three healthy members
+  ansible.builtin.assert:
+    that:
+      - etcd_members.stdout_lines | select('search', 'started') | list | length == groups['pg_nodes'] | length
+      - etcd_health.stdout_lines | select('search', 'true') | list | length == groups['pg_nodes'] | length
+    fail_msg: "etcd cluster is not healthy with {{ groups['pg_nodes'] | length }} members."
+    quiet: true
+  run_once: true
+  when: not ansible_check_mode

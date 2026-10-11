@@ -1,0 +1,26 @@
+---
+# Component versions shared by every environment.
+# Verified against upstream repos on 2026-10-07; re-check before each phase that installs them.
+
+# PGDG (download.postgresql.org/pub/repos/yum, rhel-10-x86_64)
+postgresql_version: 18              # 18.6 is latest at verification time
+postgresql_version_minor: latest    # or e.g. "6" to pin 18.6
+patroni_version: "4.1.5"
+pgbouncer_version: "1.26.0"
+etcd_version: "3.7.2"               # PGDG extras repo
+pgaudit_package: "pgaudit_{{ postgresql_version }}"  # PGDG: pgaudit_18 18.0
+
+# AlmaLinux 10 AppStream
+haproxy_version: "3.0.5"
+keepalived_version: "2.2.8"
+
+# GitHub release tarballs (checksums pinned in each role)
+node_exporter_version: "1.12.1"
+postgres_exporter_version: "0.20.1"
+pgbouncer_exporter_version: "0.12.1"
+
+# The template is installed offline from the DVD ISO with a kickstart (LVM OS split; cloud images are single-partition).
+# The DVD needs no network during install. ~10.1 GB, downloaded once to the template node.
+almalinux_iso_url: "https://repo.almalinux.org/almalinux/10.2/isos/x86_64/AlmaLinux-10.2-x86_64-dvd.iso"
+almalinux_iso_name: "AlmaLinux-10.2-x86_64-dvd.iso"
+almalinux_iso_sha256: "90244ac532f67c978831a381b420da8bda363729e1f4cf8fb8991daca70ee287"

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- {{ ansible_managed }} -->
+<!-- Blocks outgoing connections from this {{ pgc_env }} node to every other environment. -->
+<policy target="CONTINUE" priority="-100">
+  <short>{{ firewall_egress_policy }}</short>
+  <ingress-zone name="HOST"/>
+  <egress-zone name="ANY"/>
+{% for ip in pgc_foreign_ips %}
+  <rule family="ipv4"><destination address="{{ ip }}"/><reject/></rule>
+{% endfor %}
+</policy>

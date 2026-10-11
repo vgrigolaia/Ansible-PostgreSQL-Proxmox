@@ -1,0 +1,30 @@
+---
+pgbouncer_node_ip: "{{ ansible_host }}"
+pgbouncer_port: 6432
+pgbouncer_pg_port: 5432
+pgbouncer_patroni_restapi_port: 8008
+
+pgbouncer_pool_mode: transaction
+pgbouncer_max_client_conn: 1000
+pgbouncer_default_pool_size: 20
+pgbouncer_reserve_pool_size: 5
+# Server connections per database; stays below max_connections (200) to leave room for superuser, replication, exporters
+pgbouncer_max_db_connections: 150
+# Protocol-level prepared statements in transaction mode (pgbouncer >= 1.21)
+pgbouncer_max_prepared_statements: 200
+pgbouncer_ignore_startup_parameters: extra_float_digits
+pgbouncer_nofile: 65536
+
+# auth_query: pgbouncer logs in as this user and reads SCRAM secrets through pgbouncer.get_auth() in auth_dbname
+pgbouncer_auth_user: pgbouncer_auth
+pgbouncer_auth_dbname: postgres
+pgbouncer_admin_users: [postgres]     # admin console, unix socket + peer only
+pgbouncer_stats_users: [monitoring]   # pgbouncer_exporter
+
+# Who may connect to pgbouncer (besides 127.0.0.1); other environments are rejected first
+pgbouncer_allowed_cidrs: "{{ (pgc_env_node_ips | map('regex_replace', '$', '/32') | list) + [cluster_vip ~ '/32'] + admin_cidrs + app_cidrs }}"
+
+# End-to-end check through pgbouncer (auth_query + SCRAM to PostgreSQL).
+# Uses Patroni's non-superuser rewind role, which always exists.
+pgbouncer_check_user: rewind_user
+pgbouncer_check_password: "{{ vault_rewind_password }}"

@@ -1,0 +1,60 @@
+---
+# Runs on: pgdb0x-<env>. One play per component; select with --tags (see README).
+- name: Preflight
+  ansible.builtin.import_playbook: preflight.yml
+
+- name: OS baseline
+  hosts: pg_nodes
+  become: true
+  gather_facts: true
+  tags: [baseline]
+  roles:
+    - common
+    - storage
+    - pgdg_repo
+    - firewall    # last: everything else is in place before access is restricted
+
+- name: Etcd cluster
+  hosts: pg_nodes
+  become: true
+  gather_facts: true
+  tags: [etcd]
+  roles:
+    - etcd
+
+- name: PostgreSQL + Patroni
+  hosts: pg_nodes
+  become: true
+  gather_facts: true
+  tags: [patroni]
+  roles:
+    - patroni
+
+- name: Pgbouncer
+  hosts: pg_nodes
+  become: true
+  gather_facts: true
+  tags: [pgbouncer]
+  roles:
+    - pgbouncer
+
+- name: HAProxy + keepalived VIP
+  hosts: pg_nodes
+  become: true
+  gather_facts: true
+  roles:
+    - role: haproxy
+      tags: [haproxy]
+    - role: keepalived
+      tags: [keepalived]
+
+- name: Monitoring exporters
+  hosts: pg_nodes
+  become: true
+  gather_facts: true
+  tags: [monitoring]
+  roles:
+    - node_exporter
+    - postgres_exporter
+    - pgbouncer_exporter
+    - prometheus_targets

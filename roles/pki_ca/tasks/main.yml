@@ -1,0 +1,89 @@
+---
+# Runs on: workstation (localhost). Creates the CA once; never overwrites an existing one.
+- name: Check for an existing CA - {{ pki_ca_name }}
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - "{{ pki_ca_cert }}"
+    - "{{ pki_ca_key }}"
+  register: pki_ca_existing
+
+- name: Guard - CA files exist together or not at all
+  ansible.builtin.assert:
+    that:
+      - (pki_ca_existing.results | map(attribute='stat.exists') | unique | length) == 1
+    fail_msg: "Only one of {{ pki_ca_cert }} / {{ pki_ca_key }} exists. Refusing to create a new CA over a partial one."
+    quiet: true
+
+- name: CA already present
+  ansible.builtin.debug:
+    msg: "CA {{ pki_ca_common_name }} exists ({{ pki_ca_cert }}); nothing to do."
+  when: pki_ca_existing.results[0].stat.exists
+
+- name: Create CA
+  when: not pki_ca_existing.results[0].stat.exists
+  block:
+    - name: Create the CA directory (git-ignored)
+      ansible.builtin.file:
+        path: "{{ pki_ca_dir }}"
+        state: directory
+        mode: "0700"
+
+    - name: Create a private temporary directory
+      ansible.builtin.tempfile:
+        state: directory
+        suffix: -pgc-pki
+      register: pki_ca_tmp
+
+    - name: Generate CA private key (temporary, plaintext only inside the 0700 temp dir)
+      community.crypto.openssl_privatekey:
+        path: "{{ pki_ca_tmp.path }}/ca.key"
+        type: ECC
+        curve: secp384r1
+        mode: "0600"
+
+    - name: Create CA signing request
+      community.crypto.openssl_csr_pipe:
+        privatekey_path: "{{ pki_ca_tmp.path }}/ca.key"
+        common_name: "{{ pki_ca_common_name }}"
+        basic_constraints: ["CA:TRUE", "pathlen:0"]
+        basic_constraints_critical: true
+        key_usage: [keyCertSign, cRLSign]
+        key_usage_critical: true
+      register: pki_ca_csr
+
+    - name: Self-sign CA certificate
+      community.crypto.x509_certificate:
+        path: "{{ pki_ca_cert }}"
+        csr_content: "{{ pki_ca_csr.csr }}"
+        privatekey_path: "{{ pki_ca_tmp.path }}/ca.key"
+        provider: selfsigned
+        selfsigned_not_after: "+{{ pki_ca_valid_days }}d"
+        mode: "0644"
+
+    - name: Store CA key vault-encrypted
+      ansible.builtin.command:
+        argv:
+          - "{{ ansible_playbook_python | dirname }}/ansible-vault"
+          - encrypt
+          - --vault-id
+          - "{{ pki_ca_vault_id }}"
+          - --output
+          - "{{ pki_ca_key }}"
+          - "{{ pki_ca_tmp.path }}/ca.key"
+        creates: "{{ pki_ca_key }}"
+
+  always:
+    - name: Remove the temporary directory
+      ansible.builtin.file:
+        path: "{{ pki_ca_tmp.path }}"
+        state: absent
+      when: pki_ca_tmp.path is defined
+
+- name: Verify the stored CA key is vault-encrypted
+  ansible.builtin.command: head -c 14 {{ pki_ca_key }}
+  register: pki_ca_key_head
+  changed_when: false
+  failed_when: pki_ca_key_head.stdout != '$ANSIBLE_VAULT'
+  check_mode: false
+  when: not ansible_check_mode or pki_ca_existing.results[1].stat.exists

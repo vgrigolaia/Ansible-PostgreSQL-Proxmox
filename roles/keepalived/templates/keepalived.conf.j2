@@ -1,0 +1,44 @@
+# {{ ansible_managed }}
+global_defs {
+    router_id {{ inventory_hostname }}
+    enable_script_security
+    script_user nobody
+}
+
+vrrp_script chk_haproxy {
+    script "{{ keepalived_check_script }}"
+    interval 2
+    timeout 3
+    fall 2
+    rise 2
+}
+
+vrrp_instance {{ cluster_name | upper | replace('-', '_') }} {
+    state BACKUP
+    nopreempt
+    interface {{ keepalived_interface }}
+    virtual_router_id {{ keepalived_vrid }}
+    priority {{ keepalived_priority }}
+    advert_int {{ keepalived_advert_int }}
+
+    unicast_src_ip {{ keepalived_node_ip }}
+    unicast_peer {
+{% for h in groups['pg_nodes'] if h != inventory_hostname %}
+        {{ hostvars[h].ansible_host }}
+{% endfor %}
+    }
+
+    authentication {
+        auth_type PASS
+        auth_pass {{ vault_keepalived_auth_pass }}
+    }
+
+    virtual_ipaddress {
+        {{ keepalived_vip }}/{{ keepalived_vip_prefix }} dev {{ keepalived_interface }}
+    }
+
+    # HAProxy down -> FAULT -> VIP moves to another node
+    track_script {
+        chk_haproxy
+    }
+}

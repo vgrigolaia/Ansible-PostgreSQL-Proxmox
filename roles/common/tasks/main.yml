@@ -1,0 +1,123 @@
+---
+# Runs on: pgdb0x-<env>
+- name: Assert AlmaLinux 10
+  ansible.builtin.assert:
+    that:
+      - ansible_facts['distribution'] == 'AlmaLinux'
+      - ansible_facts['distribution_major_version'] == '10'
+    fail_msg: "Expected AlmaLinux 10, found {{ ansible_facts['distribution'] }} {{ ansible_facts['distribution_version'] }}"
+    quiet: true
+
+- name: Install base packages
+  ansible.builtin.dnf:
+    name: "{{ common_packages }}"
+    state: present
+
+- name: Read installed packages
+  ansible.builtin.package_facts:
+    manager: rpm
+
+# In check mode the packages above are only "would install"; skip steps that need them until they exist.
+- name: Decide whether package-dependent steps can run
+  ansible.builtin.set_fact:
+    common_tuned_ready: "{{ not ansible_check_mode or 'tuned' in ansible_facts.packages }}"
+    common_chrony_ready: "{{ not ansible_check_mode or 'chrony' in ansible_facts.packages }}"
+
+- name: Upgrade all packages
+  ansible.builtin.dnf:
+    name: "*"
+    state: latest   # noqa package-latest  (explicit opt-in via common_os_upgrade)
+  when: common_os_upgrade | bool
+
+- name: Check whether a reboot is required
+  ansible.builtin.command: dnf needs-restarting -r
+  register: common_needs_restart
+  changed_when: false
+  failed_when: common_needs_restart.rc not in [0, 1]
+  when: common_os_upgrade | bool
+
+- name: Reboot if required, one node at a time
+  ansible.builtin.reboot:
+    reboot_timeout: 900
+  throttle: 1
+  when: common_os_upgrade | bool and common_needs_restart.rc == 1
+
+- name: Set timezone
+  community.general.timezone:
+    name: "{{ os_timezone }}"
+
+- name: Configure chrony servers (only when ntp_servers is set)
+  ansible.builtin.template:
+    src: chrony.conf.j2
+    dest: /etc/chrony.conf
+    mode: "0644"
+    backup: true
+  notify: Restart chronyd
+  when: ntp_servers | length > 0
+
+- name: Enable chronyd
+  ansible.builtin.systemd_service:
+    name: chronyd
+    enabled: true
+    state: started
+  when: common_chrony_ready | bool
+
+- name: Add cluster nodes of this environment to /etc/hosts
+  ansible.builtin.blockinfile:
+    path: /etc/hosts
+    marker: "# {mark} pgc {{ pgc_env }} cluster (Ansible)"
+    block: |
+      {% for name, ip in pgc_environments[pgc_env].nodes.items() %}
+      {{ ip }} {{ name }}
+      {% endfor %}
+      {{ cluster_vip }} {{ cluster_name }}-vip
+
+- name: Find the tuned user profile directory (tuned >= 2.2x uses /etc/tuned/profiles)
+  ansible.builtin.stat:
+    path: /etc/tuned/profiles
+  register: common_tuned_profiles_dir
+
+- name: Set tuned profile path
+  ansible.builtin.set_fact:
+    common_tuned_profile_dir: >-
+      {{ ('/etc/tuned/profiles/' if common_tuned_profiles_dir.stat.isdir | default(false) else '/etc/tuned/') ~ common_tuned_profile }}
+
+- name: Remove our profile from the legacy location (written there by an earlier run)
+  ansible.builtin.file:
+    path: "/etc/tuned/{{ common_tuned_profile }}"
+    state: absent
+  when: common_tuned_profiles_dir.stat.isdir | default(false)
+
+- name: Create tuned profile directory
+  ansible.builtin.file:
+    path: "{{ common_tuned_profile_dir }}"
+    state: directory
+    mode: "0755"
+
+- name: Write tuned profile (THP off, low swappiness)
+  ansible.builtin.template:
+    src: tuned.conf.j2
+    dest: "{{ common_tuned_profile_dir }}/tuned.conf"
+    mode: "0644"
+  register: common_tuned_conf
+
+- name: Enable tuned
+  ansible.builtin.systemd_service:
+    name: tuned
+    enabled: true
+    state: started
+  when: common_tuned_ready | bool
+
+- name: Read active tuned profile
+  ansible.builtin.command: tuned-adm active
+  register: common_tuned_active
+  changed_when: false
+  check_mode: false
+  when: common_tuned_ready | bool
+
+- name: Activate tuned profile
+  ansible.builtin.command: tuned-adm profile {{ common_tuned_profile }}
+  changed_when: true
+  when:
+    - common_tuned_ready | bool
+    - common_tuned_profile not in common_tuned_active.stdout or common_tuned_conf is changed

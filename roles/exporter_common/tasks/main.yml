@@ -1,0 +1,16 @@
+---
+- name: Exporter directory
+  ansible.builtin.file:
+    path: /opt/pgc
+    state: directory
+    mode: "0755"
+
+- name: Workstation download cache
+  ansible.builtin.file:
+    path: "{{ exporter_common_cache }}"
+    state: directory
+    mode: "0755"
+  delegate_to: localhost
+  become: false
+  run_once: true
+  check_mode: false

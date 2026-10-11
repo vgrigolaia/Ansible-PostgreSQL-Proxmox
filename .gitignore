@@ -1,0 +1,19 @@
+# Local tooling
+.venv/
+collections/
+.cache/
+*.retry
+
+# Secrets: vault password files never live in the repo
+.vault_pass*
+*vault_pass*
+*.vault-password
+*credentials*.txt
+
+# Generated at runtime
+docs/prometheus/*.generated.yml
+
+# Public repo: per-env secrets stay on the workstation only (encrypted or not).
+# Back them up yourself; see README "Secrets".
+inventories/*/group_vars/all/vault.yml
+inventories/*/pki/

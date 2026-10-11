@@ -1,0 +1,14 @@
+---
+etcd_cluster_token: "{{ cluster_name }}-etcd"
+etcd_client_port: 2379
+etcd_peer_port: 2380
+etcd_metrics_port: 2381
+etcd_data_dir: /var/lib/etcd/data
+etcd_tls_dir: /etc/etcd/tls
+etcd_node_cert_valid_days: 1825
+etcd_auto_compaction_retention: "1"    # hours (periodic)
+etcd_node_ip: "{{ ansible_host }}"
+
+# CA created by playbooks/pki.yml
+etcd_ca_cert: "{{ playbook_dir }}/../inventories/{{ pgc_env }}/pki/etcd-ca.crt"
+etcd_ca_key: "{{ playbook_dir }}/../inventories/{{ pgc_env }}/pki/etcd-ca.key"   # vault-encrypted

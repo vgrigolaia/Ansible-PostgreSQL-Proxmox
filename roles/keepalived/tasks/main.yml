@@ -1,0 +1,106 @@
+---
+# Runs on: pgdb0x-<env>
+- name: Install keepalived
+  ansible.builtin.dnf:
+    name: [keepalived, curl]
+    state: present
+
+- name: Read installed packages
+  ansible.builtin.package_facts:
+    manager: rpm
+
+- name: Configure keepalived
+  when: not ansible_check_mode or 'keepalived' in ansible_facts.packages
+  block:
+    - name: Script directory
+      ansible.builtin.file:
+        path: "{{ keepalived_check_script | dirname }}"
+        state: directory
+        mode: "0755"
+
+    # keepalived_t transitions to keepalived_unconfined_script_t only for files with this type
+    - name: SELinux file type for the check script
+      community.general.sefcontext:
+        target: "{{ keepalived_check_script }}"
+        setype: keepalived_unconfined_script_exec_t
+        state: present
+
+    - name: HAProxy check script
+      ansible.builtin.template:
+        src: chk_haproxy.j2
+        dest: "{{ keepalived_check_script }}"
+        owner: root
+        group: root
+        mode: "0755"
+        setype: keepalived_unconfined_script_exec_t
+      notify: Reload keepalived
+
+    - name: Write keepalived.conf
+      ansible.builtin.template:
+        src: keepalived.conf.j2
+        dest: /etc/keepalived/keepalived.conf
+        owner: root
+        group: root
+        mode: "0600"
+        validate: /usr/sbin/keepalived --config-test -f %s
+      diff: false     # contains the VRRP password
+      notify: Reload keepalived
+      register: keepalived_conf
+
+    - name: Enable and start keepalived
+      ansible.builtin.systemd_service:
+        name: keepalived
+        enabled: true
+        state: started
+      register: keepalived_started
+
+- name: Apply pending reloads before the checks
+  ansible.builtin.meta: flush_handlers
+
+- name: Let VRRP elect a holder after a change
+  ansible.builtin.pause:
+    seconds: 10
+  run_once: true
+  when:
+    - not ansible_check_mode
+    - ansible_play_hosts | map('extract', hostvars) | selectattr('keepalived_conf', 'changed') | list | length > 0
+      or ansible_play_hosts | map('extract', hostvars) | selectattr('keepalived_started', 'changed') | list | length > 0
+
+- name: Read VIP holder
+  ansible.builtin.command: ip -o -4 addr show to {{ keepalived_vip }}
+  register: keepalived_vip_holder
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: Exactly one node holds the VIP
+  ansible.builtin.assert:
+    that:
+      - ansible_play_hosts | map('extract', hostvars, ['keepalived_vip_holder', 'stdout']) | select('truthy') | list | length == 1
+    fail_msg: "VIP {{ keepalived_vip }} must be on exactly one node; check `ip -br addr` on each node."
+    quiet: true
+  run_once: true
+  when: not ansible_check_mode
+
+- name: VIP holder
+  ansible.builtin.debug:
+    msg: "{{ keepalived_vip }} is on {{ inventory_hostname }}"
+  when: not ansible_check_mode and keepalived_vip_holder.stdout | length > 0
+
+# End to end: VIP -> HAProxy -> pgbouncer -> PostgreSQL
+- name: Login through the VIP
+  ansible.builtin.command: >-
+    /usr/pgsql-{{ postgresql_version }}/bin/psql -XAtq
+    "host={{ keepalived_vip }} port={{ item.port }} dbname=postgres user={{ keepalived_check_user }}"
+    -c "SELECT pg_is_in_recovery()"
+  environment:
+    PGPASSWORD: "{{ keepalived_check_password }}"
+  register: keepalived_e2e
+  changed_when: false
+  failed_when: keepalived_e2e.rc != 0 or keepalived_e2e.stdout != item.expect
+  loop:
+    - { port: 5000, expect: "f" }   # primary
+    - { port: 5001, expect: "t" }   # a replica
+  loop_control:
+    label: "{{ keepalived_vip }}:{{ item.port }} expects pg_is_in_recovery={{ item.expect }}"
+  run_once: true
+  when: not ansible_check_mode

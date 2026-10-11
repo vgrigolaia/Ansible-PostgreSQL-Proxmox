@@ -1,0 +1,8 @@
+---
+epel_repo_base_url: https://dl.fedoraproject.org/pub/epel
+epel_repo_key_url: "{{ epel_repo_base_url }}/RPM-GPG-KEY-EPEL-10"
+epel_repo_key_path: /etc/pki/rpm-gpg/RPM-GPG-KEY-EPEL-10
+# Verified 2026-10-08 against https://fedoraproject.org/security/ (EPEL 10, rsa4096 33D98517E37ED158)
+epel_repo_key_fingerprint: 7D8D15CBFC4E62688591FB2633D98517E37ED158
+# Only these packages may come from EPEL. patroni (PGDG) needs python3-click, which AlmaLinux 10 does not ship.
+epel_repo_includepkgs: "python3-click"

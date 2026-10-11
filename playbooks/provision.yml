@@ -1,0 +1,44 @@
+---
+# Proxmox provisioning.
+#   --tags template : runs on the template node (SSH as root), builds the template once
+#   --tags vms      : runs on the workstation (Proxmox API), clones/configures/starts the env's VMs,
+#                     then waits for SSH on pgdb0x-<env>
+- name: Preflight
+  ansible.builtin.import_playbook: preflight.yml
+
+- name: Template {{ pve_template_vmid | default('9000') }}
+  hosts: pve_nodes
+  gather_facts: false
+  tags: [template]
+  tasks:
+    - name: Build template on the template node only
+      ansible.builtin.include_role:
+        name: proxmox_template
+      when: inventory_hostname == pve_template_node
+
+- name: VMs via Proxmox API
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tags: [vms]
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+  module_defaults:
+    group/community.proxmox.proxmox:
+      api_host: "{{ pve_api_host }}"
+      api_user: "{{ pve_api_token_id.split('!')[0] }}"
+      api_token_id: "{{ pve_api_token_id.split('!')[1] }}"
+      api_token_secret: "{{ pve_api_token_secret }}"
+      validate_certs: "{{ pve_api_validate_certs }}"
+  roles:
+    - proxmox_vm
+
+- name: Wait for VMs to accept SSH
+  hosts: pg_nodes
+  gather_facts: false
+  tags: [vms]
+  tasks:
+    - name: Wait for SSH as {{ vm_ci_user }}
+      ansible.builtin.wait_for_connection:
+        timeout: 600
+      when: not ansible_check_mode

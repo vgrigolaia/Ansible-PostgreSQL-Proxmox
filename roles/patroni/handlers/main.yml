@@ -1,0 +1,6 @@
+---
+- name: Reload patroni
+  ansible.builtin.systemd_service:
+    name: patroni
+    state: reloaded
+  when: patroni_unit.status.ActiveState | default('') == 'active'

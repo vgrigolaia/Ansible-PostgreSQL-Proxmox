@@ -1,0 +1,87 @@
+---
+# Install one Prometheus exporter from its upstream release tarball.
+# The tarball is downloaded once on the workstation (sha256 pinned) and copied to the nodes.
+# Inputs: exporter_common_name, exporter_common_version, exporter_common_url, exporter_common_sha256,
+#         exporter_common_args (list), exporter_common_env (dict, may hold secrets), exporter_common_groups (list),
+#         exporter_common_secret (optional: written to /etc/<name>.secret, readable by the service user only)
+- name: Download on the workstation, sha256 pinned - {{ exporter_common_name }}
+  ansible.builtin.get_url:
+    url: "{{ exporter_common_url }}"
+    dest: "{{ exporter_common_cache }}/{{ exporter_common_url | basename }}"
+    checksum: "sha256:{{ exporter_common_sha256 }}"
+    mode: "0644"
+  delegate_to: localhost
+  become: false
+  run_once: true
+  check_mode: false
+
+- name: Service user - {{ exporter_common_name }}
+  ansible.builtin.user:
+    name: "{{ exporter_common_name }}"
+    system: true
+    shell: /sbin/nologin
+    home: /nonexistent
+    create_home: false
+    groups: "{{ exporter_common_groups }}"
+    append: true
+  register: exporter_common_user
+
+- name: Secret file - {{ exporter_common_name }}
+  ansible.builtin.copy:
+    dest: "/etc/{{ exporter_common_name }}.secret"
+    content: "{{ exporter_common_secret }}"
+    owner: root
+    group: "{{ exporter_common_name }}"
+    mode: "0640"
+  no_log: true
+  when: exporter_common_secret | length > 0 and not (ansible_check_mode and exporter_common_user is changed)
+  notify: "Restart {{ exporter_common_name }}"
+
+- name: Unpack - {{ exporter_common_name }}
+  ansible.builtin.unarchive:
+    src: "{{ exporter_common_cache }}/{{ exporter_common_url | basename }}"
+    dest: /opt/pgc
+    creates: "/opt/pgc/{{ exporter_common_url | basename | regex_replace('\\.tar\\.gz$', '') }}/{{ exporter_common_name }}"
+  when: not ansible_check_mode
+
+# /usr/local/bin gives the binary the bin_t label (runs as unconfined_service_t under systemd)
+- name: Install binary - {{ exporter_common_name }}
+  ansible.builtin.copy:
+    src: "/opt/pgc/{{ exporter_common_url | basename | regex_replace('\\.tar\\.gz$', '') }}/{{ exporter_common_name }}"
+    dest: "/usr/local/bin/{{ exporter_common_name }}"
+    remote_src: true
+    owner: root
+    group: root
+    mode: "0755"
+  notify: "Restart {{ exporter_common_name }}"
+  when: not ansible_check_mode
+
+- name: Environment file - {{ exporter_common_name }}
+  ansible.builtin.copy:
+    dest: "/etc/sysconfig/{{ exporter_common_name }}"
+    content: |
+      {% for k, v in exporter_common_env.items() %}
+      {{ k }}={{ v }}
+      {% endfor %}
+    owner: root
+    group: root
+    mode: "0600"
+  diff: false     # may contain a password
+  no_log: true
+  notify: "Restart {{ exporter_common_name }}"
+  when: exporter_common_env | length > 0
+
+- name: Systemd unit - {{ exporter_common_name }}
+  ansible.builtin.template:
+    src: exporter.service.j2
+    dest: "/etc/systemd/system/{{ exporter_common_name }}.service"
+    mode: "0644"
+  notify: "Restart {{ exporter_common_name }}"
+
+- name: Enable and start - {{ exporter_common_name }}
+  ansible.builtin.systemd_service:
+    name: "{{ exporter_common_name }}"
+    enabled: true
+    state: started
+    daemon_reload: true
+  when: not ansible_check_mode

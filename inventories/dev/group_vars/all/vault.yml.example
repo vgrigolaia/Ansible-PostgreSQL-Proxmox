@@ -1,0 +1,18 @@
+---
+# Copy to vault.yml, fill in, then encrypt:
+#   ansible-vault encrypt --vault-id dev@~/.ansible/vault/pgc-dev inventories/dev/group_vars/all/vault.yml
+vault_pve_api_token_id: "user@pve!tokenname"   # Proxmox API token ID: <user>@<realm>!<token name>
+vault_pve_api_token_secret: ""
+
+vault_vm_ci_password: ""          # console password for the cloud-init user
+
+vault_postgres_superuser_password: ""
+vault_replication_password: ""
+vault_rewind_password: ""
+vault_pgbouncer_auth_password: ""
+vault_monitoring_password: ""
+vault_patroni_restapi_password: ""
+
+vault_keepalived_auth_pass: ""   # max 8 characters (VRRPv2 truncates)
+
+# The etcd CA is not in this file: playbooks/pki.yml writes inventories/<env>/pki/etcd-ca.crt and a vault-encrypted etcd-ca.key.

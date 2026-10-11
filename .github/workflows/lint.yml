@@ -1,0 +1,28 @@
+---
+# Static checks only: needs no vault password, contacts no host, never deploys.
+name: lint
+
+"on":
+  push:
+    branches: [dev, prod, "feat/**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+      - name: Install tooling
+        run: make deps
+      - name: yamllint + ansible-lint
+        run: make lint
+      - name: Syntax check (dev, prod)
+        run: |
+          make syntax ENV=dev
+          make syntax ENV=prod

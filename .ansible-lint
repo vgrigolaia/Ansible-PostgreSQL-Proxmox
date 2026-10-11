@@ -1,0 +1,11 @@
+---
+profile: production
+
+exclude_paths:
+  - .venv/
+  - collections/
+  - .cache/
+  - "**/vault.yml.example"
+  - "**/vault.yml"
+
+offline: true

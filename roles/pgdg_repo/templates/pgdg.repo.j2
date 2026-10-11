@@ -1,0 +1,30 @@
+# {{ ansible_managed }}
+# Mirrors the sections of PGDG's pgdg-redhat-all.repo that this cluster needs.
+
+[pgdg-common]
+name=PostgreSQL common RPMs for RHEL / AlmaLinux $releasever_major.$releasever_minor - $basearch
+baseurl={{ pgdg_repo_base_url }}/common/redhat/rhel-$releasever_major.$releasever_minor-$basearch
+enabled=1
+gpgcheck=1
+gpgkey=file://{{ pgdg_repo_key_path }}
+repo_gpgcheck=1
+priority=1
+
+[pgdg{{ postgresql_version }}]
+name=PostgreSQL {{ postgresql_version }} for RHEL / AlmaLinux $releasever_major.$releasever_minor - $basearch
+baseurl={{ pgdg_repo_base_url }}/{{ postgresql_version }}/redhat/rhel-$releasever_major.$releasever_minor-$basearch
+enabled=1
+gpgcheck=1
+gpgkey=file://{{ pgdg_repo_key_path }}
+repo_gpgcheck=1
+priority=1
+
+[pgdg-rhel10-extras]
+name=PGDG extras (etcd only) for RHEL / AlmaLinux $releasever_major.$releasever_minor - $basearch
+baseurl={{ pgdg_repo_base_url }}/extras/redhat/rhel-$releasever_major.$releasever_minor-$basearch
+enabled=1
+includepkgs={{ pgdg_repo_extras_includepkgs }}
+gpgcheck=1
+gpgkey=file://{{ pgdg_repo_key_path }}
+repo_gpgcheck=1
+priority=1

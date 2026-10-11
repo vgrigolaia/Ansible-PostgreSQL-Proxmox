@@ -1,0 +1,63 @@
+---
+patroni_packages:
+  - "postgresql{{ postgresql_version }}-server"
+  - "postgresql{{ postgresql_version }}-contrib"
+  - "pgaudit_{{ postgresql_version }}"
+  - patroni
+  - patroni-etcd
+  - python3-cryptography
+
+patroni_node_ip: "{{ ansible_host }}"
+patroni_restapi_port: 8008
+patroni_pg_port: 5432
+patroni_bin_dir: "/usr/pgsql-{{ postgresql_version }}/bin"
+patroni_data_dir: "/var/lib/pgsql/{{ postgresql_version }}/data"
+patroni_wal_dir: "/pgwal/{{ postgresql_version }}/pg_wal"
+patroni_log_dir: /pg_audit_logs
+patroni_conf_dir: /etc/patroni
+patroni_tls_dir: /etc/patroni/tls
+
+patroni_superuser: postgres
+patroni_replication_user: replicator
+patroni_rewind_user: rewind_user
+patroni_restapi_user: patroni
+
+# Cluster-wide settings. Applied only when the cluster is first bootstrapped;
+# later changes go through `patronictl edit-config` (see docs/runbook.md).
+patroni_synchronous_mode: false     # true = no committed transaction is lost on failover (falls back to async if no replica)
+patroni_ttl: 30
+patroni_loop_wait: 10
+patroni_retry_timeout: 10
+patroni_maximum_lag_on_failover: 1048576
+# softdog watchdog: automatic (use if present) or required (a node without a working watchdog never becomes leader)
+patroni_watchdog_mode: automatic
+
+# Memory-derived sizing (vm_memory_mb from the inventory)
+patroni_shared_buffers_mb: "{{ (vm_memory_mb | int * 0.25) | int }}"
+patroni_effective_cache_size_mb: "{{ (vm_memory_mb | int * 0.75) | int }}"
+
+patroni_pg_parameters:
+  max_connections: 200
+  shared_buffers: "{{ patroni_shared_buffers_mb }}MB"
+  effective_cache_size: "{{ patroni_effective_cache_size_mb }}MB"
+  maintenance_work_mem: 256MB
+  work_mem: 4MB
+  wal_level: replica
+  wal_log_hints: "on"
+  max_wal_size: 2GB
+  min_wal_size: 512MB
+  max_wal_senders: 10
+  max_replication_slots: 10
+  hot_standby: "on"
+  password_encryption: scram-sha-256
+  shared_preload_libraries: pg_stat_statements,pgaudit
+  pgaudit.log: ddl,role
+  logging_collector: "on"
+  log_directory: "{{ patroni_log_dir }}"
+  log_filename: postgresql-%a.log
+  log_truncate_on_rotation: "on"
+  log_rotation_age: 1d
+  log_rotation_size: "0"
+  log_line_prefix: "%m [%p] %q%u@%d "
+  log_min_duration_statement: 1000
+  log_checkpoints: "on"

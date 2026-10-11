@@ -1,0 +1,14 @@
+# {{ ansible_managed }}
+# Other environments: rejected first
+{% for ip in pgc_foreign_ips %}
+host  all  all  {{ ip }}/32  reject
+{% endfor %}
+# Admin console: admin users over the unix socket with peer auth only; rejected everywhere else
+local  pgbouncer  {{ pgbouncer_admin_users | join(',') }}  peer
+local  all  {{ pgbouncer_admin_users | join(',') }}  reject
+host   all  {{ pgbouncer_admin_users | join(',') }}  0.0.0.0/0  reject
+local  all  all  scram-sha-256
+host   all  all  127.0.0.1/32  scram-sha-256
+{% for cidr in pgbouncer_allowed_cidrs | unique %}
+host   all  all  {{ cidr }}  scram-sha-256
+{% endfor %}

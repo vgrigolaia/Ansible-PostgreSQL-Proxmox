@@ -1,0 +1,70 @@
+# {{ ansible_managed }}
+# Kickstart for template {{ pve_template_vmid }} ({{ proxmox_template_name }}): AlmaLinux 10 from DVD, offline.
+# Picked up automatically by Anaconda from the CD labelled OEMDRV.
+text
+cdrom
+lang en_US.UTF-8
+keyboard us
+timezone UTC --utc
+network --bootproto=dhcp --onboot=yes --no-activate
+rootpw --lock
+selinux --enforcing
+firewall --enabled --service=ssh
+firstboot --disabled
+services --enabled=sshd,qemu-guest-agent,cloud-init,cloud-init-local,cloud-config,cloud-final
+
+ignoredisk --only-use={{ proxmox_template_os_dev }}
+zerombr
+clearpart --all --initlabel --drives={{ proxmox_template_os_dev }}
+bootloader --location=mbr --boot-drive={{ proxmox_template_os_dev }} --append="console=tty0 console=ttyS0,115200n8"
+reqpart
+part /boot --fstype=xfs --size={{ proxmox_template_boot_mb }} --ondisk={{ proxmox_template_os_dev }}
+part pv.01 --size=1 --grow --ondisk={{ proxmox_template_os_dev }}
+volgroup almalinux pv.01
+{% for lv in proxmox_template_lvm %}
+{% if lv.mount == 'swap' %}
+logvol swap --vgname=almalinux --name={{ lv.name }} --size={{ lv.size_mb }}
+{% else %}
+logvol {{ lv.mount }} --vgname=almalinux --name={{ lv.name }} --fstype=xfs --size={{ lv.size_mb }}
+{% endif %}
+{% endfor %}
+
+poweroff
+
+%packages
+@^minimal-environment
+cloud-init
+cloud-utils-growpart
+qemu-guest-agent
+lvm2
+xfsprogs
+python3
+tar
+%end
+
+%post --erroronfail
+cat > /etc/cloud/cloud.cfg.d/99-pgc.cfg <<'EOF'
+# Proxmox provides a NoCloud drive
+datasource_list: [NoCloud, ConfigDrive, None]
+# OS disk is LVM; growth is handled by Ansible (OS baseline), not cloud-init
+growpart:
+  mode: "off"
+resize_rootfs: false
+ssh_pwauth: false
+disable_root: true
+system_info:
+  default_user:
+    name: {{ vm_ci_user }}
+    lock_passwd: false
+    groups: [wheel]
+    sudo: ["ALL=(ALL) NOPASSWD:ALL"]
+    shell: /bin/bash
+EOF
+
+# Generalise: every clone gets fresh identity
+rm -f /etc/ssh/ssh_host_*
+truncate -s 0 /etc/machine-id
+rm -f /var/lib/systemd/random-seed
+cloud-init clean --logs
+dnf clean all
+%end

@@ -1,0 +1,103 @@
+---
+# The disk is found by its Proxmox serial (scsiN -> /dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_<serial>), not by sdX order.
+- name: Set device paths - {{ storage_disk.name }}
+  ansible.builtin.set_fact:
+    storage_dev: "/dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_{{ storage_disk.name }}"
+    storage_lv_dev: "/dev/{{ storage_disk.vg }}/{{ storage_disk.lv }}"
+
+- name: Look for the disk by serial - {{ storage_disk.name }}
+  ansible.builtin.stat:
+    path: "{{ storage_dev }}"
+  register: storage_dev_stat
+
+- name: Probe existing signatures - {{ storage_disk.name }}
+  ansible.builtin.command: blkid -p -o value -s TYPE {{ storage_dev }}
+  register: storage_dev_type
+  changed_when: false
+  failed_when: storage_dev_type.rc not in [0, 2]
+  check_mode: false
+  when: storage_dev_stat.stat.exists
+
+- name: Read VG of an existing PV - {{ storage_disk.name }}
+  ansible.builtin.command: pvs --noheadings -o vg_name {{ storage_dev }}
+  register: storage_dev_vg
+  changed_when: false
+  check_mode: false
+  when: storage_dev_stat.stat.exists and storage_dev_type.stdout | trim == 'LVM2_member'
+
+- name: Guard - disk is empty or already ours - {{ storage_disk.name }}
+  ansible.builtin.assert:
+    that:
+      - storage_dev_stat.stat.exists
+      - (storage_dev_type.stdout | trim) in ['', 'LVM2_member']
+      - (storage_dev_type.stdout | trim) != 'LVM2_member' or (storage_dev_vg.stdout | trim) == storage_disk.vg
+    fail_msg: >-
+      {{ storage_dev }} is missing, or carries '{{ storage_dev_type.stdout | default('') | trim }}'
+      {{ ('(VG ' ~ (storage_dev_vg.stdout | default('') | trim) ~ ')') if storage_dev_vg is not skipped else '' }}
+      instead of being empty or VG {{ storage_disk.vg }}. Refusing to touch it.
+    quiet: true
+
+- name: Create PV and VG - {{ storage_disk.vg }}
+  community.general.lvg:
+    vg: "{{ storage_disk.vg }}"
+    pvs: "{{ storage_dev }}"
+
+- name: Check whether the VG exists - {{ storage_disk.vg }}
+  ansible.builtin.command: vgs {{ storage_disk.vg }}
+  register: storage_vg_exists
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Check whether the LV exists - {{ storage_disk.lv }}
+  ansible.builtin.command: lvs {{ storage_disk.vg }}/{{ storage_disk.lv }}
+  register: storage_lv_exists
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Create LV using the whole VG - {{ storage_disk.lv }}
+  community.general.lvol:
+    vg: "{{ storage_disk.vg }}"
+    lv: "{{ storage_disk.lv }}"
+    size: 100%FREE
+  when:
+    - storage_lv_exists.rc != 0
+    - not ansible_check_mode or storage_vg_exists.rc == 0
+
+- name: Create xfs (never reformats an existing filesystem) - {{ storage_disk.lv }}
+  community.general.filesystem:
+    dev: "{{ storage_lv_dev }}"
+    fstype: xfs
+  when: not ansible_check_mode or storage_lv_exists.rc == 0
+
+- name: Read filesystem UUID - {{ storage_disk.lv }}
+  ansible.builtin.command: blkid -s UUID -o value {{ storage_lv_dev }}
+  register: storage_fs_uuid
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Mount by UUID - {{ storage_disk.mount }}
+  ansible.posix.mount:
+    path: "{{ storage_disk.mount }}"
+    src: "UUID={{ storage_fs_uuid.stdout | trim }}"
+    fstype: xfs
+    opts: "{{ storage_mount_opts }}"
+    state: mounted
+  when: storage_fs_uuid.stdout | trim | length > 0
+
+- name: SELinux file context - {{ storage_disk.mount }}
+  community.general.sefcontext:
+    target: "{{ storage_disk.mount }}(/.*)?"
+    setype: "{{ storage_selinux_types[storage_disk.name] }}"
+    state: present
+  when:
+    - storage_disk.name in storage_selinux_types
+    - not ansible_check_mode or 'python3-policycoreutils' in ansible_facts.packages
+
+- name: Apply SELinux contexts - {{ storage_disk.mount }}
+  ansible.builtin.command: restorecon -R -v {{ storage_disk.mount }}
+  register: storage_restorecon
+  changed_when: storage_restorecon.stdout | length > 0
+  when: not ansible_check_mode

@@ -1,0 +1,19 @@
+---
+# Runs on: pgdb0x-<env>
+# OS disk: grow partition -> PV -> LVs to vm_os_lvm sizes (grow only, never shrink).
+# PG disks: PV -> VG -> one LV (100%FREE) -> xfs -> mount by UUID. Refuses disks that carry anything but our own VG.
+
+- name: Ensure SELinux is enforcing
+  ansible.posix.selinux:
+    policy: targeted
+    state: enforcing
+
+- name: Grow the OS disk
+  ansible.builtin.include_tasks: os_disk.yml
+
+- name: Prepare PostgreSQL disks
+  ansible.builtin.include_tasks: pg_disk.yml
+  loop: "{{ vm_pg_disks }}"
+  loop_control:
+    loop_var: storage_disk
+    label: "{{ storage_disk.name }} -> {{ storage_disk.mount }}"

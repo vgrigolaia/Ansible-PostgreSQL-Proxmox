@@ -1,0 +1,10 @@
+---
+prometheus_targets_file: "{{ playbook_dir }}/../docs/prometheus/{{ cluster_name }}.yml"
+# job suffix: [port, metrics path]
+prometheus_targets_jobs:
+  node: [9100, /metrics]
+  postgres: [9187, /metrics]
+  pgbouncer: [9127, /metrics]
+  patroni: [8008, /metrics]
+  haproxy: [8404, /metrics]
+  etcd: [2381, /metrics]

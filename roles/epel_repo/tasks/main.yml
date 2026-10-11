@@ -1,0 +1,27 @@
+---
+# Runs on: pgdb0x-<env>
+# EPEL limited to includepkgs, signing key pinned to its fingerprint. All packages stay gpg-checked.
+
+- name: Download the EPEL 10 signing key
+  ansible.builtin.get_url:
+    url: "{{ epel_repo_key_url }}"
+    dest: "{{ epel_repo_key_path }}"
+    mode: "0644"
+
+- name: Import the EPEL 10 key (fingerprint pinned)
+  ansible.builtin.rpm_key:
+    key: "{{ epel_repo_key_path }}"
+    fingerprint: "{{ epel_repo_key_fingerprint }}"
+    state: present
+  when: not ansible_check_mode
+
+- name: Write EPEL repo file
+  ansible.builtin.template:
+    src: epel.repo.j2
+    dest: /etc/yum.repos.d/epel-pgc.repo
+    mode: "0644"
+  register: epel_repo_file
+
+- name: Note whether the repo exists yet (check mode cannot resolve packages from it)
+  ansible.builtin.set_fact:
+    epel_repo_pending: "{{ ansible_check_mode and epel_repo_file is changed }}"

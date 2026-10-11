@@ -1,0 +1,8 @@
+---
+# Verified 2026-10-08 against the GitHub release (sha256sums.txt)
+pgbouncer_exporter_version: 0.12.1
+pgbouncer_exporter_sha256: fa391b513d3a3f03843a6e0d64e711fda1f057dc43133db5c1b130ba38767857
+pgbouncer_exporter_release: "https://github.com/prometheus-community/pgbouncer_exporter/releases/download/v{{ pgbouncer_exporter_version }}"
+pgbouncer_exporter_url: "{{ pgbouncer_exporter_release }}/pgbouncer_exporter-{{ pgbouncer_exporter_version }}.linux-amd64.tar.gz"
+pgbouncer_exporter_port: 9127
+pgbouncer_exporter_user: monitoring     # listed in pgbouncer stats_users and userlist.txt

@@ -1,0 +1,5 @@
+---
+ansible_user: "{{ vm_ci_user }}"
+ansible_become: true
+# Trust a VM host key on first contact, refuse if it later changes
+ansible_ssh_common_args: "-o StrictHostKeyChecking=accept-new"

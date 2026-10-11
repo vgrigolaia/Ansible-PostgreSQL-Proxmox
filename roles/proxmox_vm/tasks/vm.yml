@@ -1,0 +1,77 @@
+---
+# Changes for one VM. Only reached after check.yml passed for every VM.
+- name: Look up and guard again right before changing - {{ vm_host }}
+  ansible.builtin.include_tasks: lookup.yml
+
+- name: Clone template - {{ vm_host }}
+  community.proxmox.proxmox_kvm:
+    node: "{{ pve_template_node }}"
+    vmid: "{{ pve_template_vmid }}"
+    clone: "{{ proxmox_vm_template_name }}"
+    newid: "{{ proxmox_vm_id | int }}"
+    name: "{{ vm_host }}"
+    target: "{{ proxmox_vm_node }}"
+    storage: "{{ pve_storage }}"
+    full: true
+    pool: "{{ pve_pool }}"
+    timeout: 1800
+  when: proxmox_vm_existing.proxmox_vms | length == 0
+  throttle: 1
+
+- name: Configure CPU, memory and cloud-init - {{ vm_host }}
+  community.proxmox.proxmox_kvm:
+    node: "{{ proxmox_vm_node }}"
+    vmid: "{{ proxmox_vm_id | int }}"
+    name: "{{ vm_host }}"
+    update: true
+    cpu: "{{ vm_cpu_type }}"
+    cores: "{{ vm_cores | int }}"
+    memory: "{{ vm_memory_mb | int }}"
+    scsihw: "{{ vm_scsihw }}"
+    onboot: true
+    agent: "enabled=1"
+    tags: [pgc, "{{ pgc_env }}"]
+    ciuser: "{{ vm_ci_user }}"
+    ciupgrade: false    # package updates are done by Ansible (OS baseline), not on every cloud-init boot
+    cipassword: "{{ vm_ci_password }}"
+    sshkeys: "{{ vm_ci_ssh_keys | join('\n') }}"
+    ipconfig:
+      ipconfig0: "ip={{ proxmox_vm_ip }}/{{ net_prefix }},gw={{ net_gateway }}"
+    nameservers: "{{ net_dns_servers }}"
+    searchdomains: "{{ [net_search_domain] if net_search_domain else omit }}"
+  no_log: true    # carries the cloud-init password
+
+- name: Resize OS disk - {{ vm_host }}
+  community.proxmox.proxmox_disk:
+    vmid: "{{ proxmox_vm_id | int }}"
+    disk: "{{ vm_os_disk_slot }}"
+    size: "{{ vm_os_disk_gb }}G"
+    state: resized
+
+- name: Add PostgreSQL disks to {{ vm_host }}
+  community.proxmox.proxmox_disk:
+    vmid: "{{ proxmox_vm_id | int }}"
+    disk: "{{ item.slot }}"
+    storage: "{{ pve_storage }}"
+    size: "{{ item.size_gb }}"
+    serial: "{{ item.name }}"
+    discard: "on"
+    iothread: true
+    create: regular
+    state: present
+  loop: "{{ vm_pg_disks }}"
+  loop_control:
+    label: "{{ item.slot }} {{ item.name }} {{ item.size_gb }}G"
+
+- name: Ensure pool membership - {{ vm_host }}
+  community.proxmox.proxmox_pool_member:
+    poolid: "{{ pve_pool }}"
+    members:
+      - vm: "{{ proxmox_vm_id | int }}"
+    state: present
+
+- name: Start {{ vm_host }}
+  community.proxmox.proxmox_kvm:
+    vmid: "{{ proxmox_vm_id | int }}"
+    node: "{{ proxmox_vm_node }}"
+    state: started

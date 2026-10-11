@@ -1,0 +1,6 @@
+---
+exporter_common_cache: "{{ playbook_dir }}/../.cache/downloads"
+exporter_common_args: []
+exporter_common_env: {}
+exporter_common_groups: []
+exporter_common_secret: ""

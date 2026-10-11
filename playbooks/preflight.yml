@@ -1,0 +1,28 @@
+---
+# Runs first in every playbook (tagged always). Makes no changes and does not connect to hosts.
+- name: Preflight - inventory matches environment registry
+  hosts: pg_nodes
+  gather_facts: false
+  tags: [always]
+  tasks:
+    - name: Assert host IP and VM ID belong to this environment and are not reserved
+      ansible.builtin.assert:
+        that:
+          - pgc_env in pgc_environments
+          - inventory_hostname in pgc_environments[pgc_env].nodes
+          - ansible_host == pgc_environments[pgc_env].nodes[inventory_hostname]
+          - ansible_host not in pgc_foreign_ips
+          - ansible_host not in pgc_reserved_ips
+          - vm_id in pgc_environments[pgc_env].vm_ids
+          - vm_id != pve_template_vmid
+        fail_msg: "{{ inventory_hostname }} ({{ ansible_host }}, VM {{ vm_id }}) does not match pgc_environments.{{ pgc_env }}"
+        quiet: true
+
+    - name: Assert one VM per PVE node and unique VM IDs
+      ansible.builtin.assert:
+        that:
+          - groups['pg_nodes'] | map('extract', hostvars, 'vm_pve_node') | unique | length == groups['pg_nodes'] | length
+          - groups['pg_nodes'] | map('extract', hostvars, 'vm_id') | unique | length == groups['pg_nodes'] | length
+        fail_msg: "Each pg node must sit on a distinct PVE node with a distinct VM ID"
+        quiet: true
+      run_once: true

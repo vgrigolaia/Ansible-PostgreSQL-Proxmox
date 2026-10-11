@@ -1,0 +1,28 @@
+---
+firewall_zone: pgc
+firewall_egress_policy: pgc-egress
+
+# Only reachable from this environment's own node IPs
+firewall_cluster_tcp_ports:
+  - 5432    # PostgreSQL (replication, pg_rewind)
+  - 6432    # pgbouncer (HAProxy backends)
+  - 8008    # Patroni REST (HAProxy health checks, Patroni peers)
+  - 2379    # etcd client
+  - 2380    # etcd peer
+# Reachable from admin_cidrs and app_cidrs (also via the VIP)
+firewall_client_tcp_ports:
+  - 5000    # HAProxy -> primary
+  - 5001    # HAProxy -> replicas
+  - 6432    # pgbouncer direct
+# Extra ports for admin_cidrs only
+firewall_admin_tcp_ports:
+  - 22      # SSH
+  - 8404    # HAProxy stats
+# Reachable from the Prometheus server only
+firewall_monitoring_tcp_ports:
+  - 9100    # node_exporter
+  - 9187    # postgres_exporter
+  - 9127    # pgbouncer_exporter
+  - 8008    # Patroni /metrics
+  - 8404    # HAProxy /metrics
+  - 2381    # etcd /metrics

@@ -1,0 +1,56 @@
+---
+# Runs on: pgdb0x-<env>
+# The monitoring role and pg_stat_statements are created on the Patroni leader; replicas receive them by replication.
+- name: Find the Patroni leader
+  ansible.builtin.uri:
+    url: "http://{{ ansible_host }}:{{ postgres_exporter_patroni_port }}/primary"
+    status_code: [200, 503]
+  register: postgres_exporter_primary
+  check_mode: false
+
+- name: Monitoring role and pg_stat_statements (leader only)
+  when: postgres_exporter_primary.status == 200
+  become: true
+  become_user: postgres
+  module_defaults:
+    group/community.postgresql.all:
+      login_unix_socket: /run/postgresql
+      login_db: postgres
+  block:
+    - name: Monitoring role
+      community.postgresql.postgresql_user:
+        name: "{{ postgres_exporter_user }}"
+        password: "{{ vault_monitoring_password }}"
+        role_attr_flags: LOGIN,NOSUPERUSER,NOCREATEDB,NOCREATEROLE
+      no_log: true
+      register: postgres_exporter_role
+
+    - name: Monitoring role is a member of pg_monitor
+      community.postgresql.postgresql_membership:
+        groups: [pg_monitor]
+        target_roles: ["{{ postgres_exporter_user }}"]
+        state: present
+      when: not (ansible_check_mode and postgres_exporter_role is changed)
+
+    - name: Extension pg_stat_statements (preloaded by Patroni)
+      community.postgresql.postgresql_ext:
+        name: pg_stat_statements
+        state: present
+
+- name: Install postgres_exporter
+  ansible.builtin.include_role:
+    name: exporter_common
+    tasks_from: install
+  vars:
+    exporter_common_name: postgres_exporter
+    exporter_common_version: "{{ postgres_exporter_version }}"
+    exporter_common_url: "{{ postgres_exporter_url }}"
+    exporter_common_sha256: "{{ postgres_exporter_sha256 }}"
+    exporter_common_args:
+      - "--web.listen-address={{ ansible_host }}:{{ postgres_exporter_port }}"
+      - --collector.stat_statements
+    exporter_common_secret: "{{ vault_monitoring_password }}"
+    exporter_common_env:
+      DATA_SOURCE_URI: "127.0.0.1:5432/postgres?sslmode=disable"
+      DATA_SOURCE_USER: "{{ postgres_exporter_user }}"
+      DATA_SOURCE_PASS_FILE: /etc/postgres_exporter.secret

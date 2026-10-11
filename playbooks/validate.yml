@@ -1,0 +1,415 @@
+---
+# Runs on: pgdb0x-<env> (driven from the workstation)
+#   ansible-playbook $INV $VAULT playbooks/validate.yml                     read-only checks
+#   ansible-playbook $INV $VAULT playbooks/validate.yml --tags disruptive   switchover, leader failure, VIP move
+- name: Preflight
+  ansible.builtin.import_playbook: preflight.yml
+
+- name: Validate the cluster (read-only)
+  hosts: pg_nodes
+  become: true
+  gather_facts: false
+  tags: [readonly]
+  vars:
+    validate_pg_bin: "/usr/pgsql-{{ postgresql_version }}/bin"
+    validate_patronictl: patronictl -c /etc/patroni/patroni.yml
+    validate_nodes: "{{ groups['pg_nodes'] | length }}"
+    validate_services: [etcd, patroni, pgbouncer, haproxy, keepalived, node_exporter, postgres_exporter, pgbouncer_exporter]
+    validate_metrics_ports: [9100, 9187, 9127, 8008, 8404, 2381]
+    validate_isolated_ports: [5432, 6432, 8008, 2379, 2380, 5000, 5001]
+    validate_max_lag_mb: 16
+    validate_check_user: rewind_user     # non-superuser with a vault password, until application users exist
+    validate_check_password: "{{ vault_rewind_password }}"
+  tasks:
+    # ---- per node ------------------------------------------------------------------------------------------------
+    - name: SELinux mode
+      ansible.builtin.command: getenforce
+      register: validate_selinux
+      changed_when: false
+      failed_when: false
+
+    - name: Services active
+      ansible.builtin.command: systemctl is-active {{ validate_services | join(' ') }}   # noqa: command-instead-of-module (8 units in one call)
+      register: validate_svc
+      changed_when: false
+      failed_when: false
+
+    - name: PostgreSQL settings (checksums, pgaudit, scram, WAL on /pgwal)
+      ansible.builtin.shell: |
+        set -o pipefail
+        {{ validate_pg_bin }}/psql -XAtq -h /run/postgresql -d postgres -F '|' -c "
+          SELECT current_setting('data_checksums'),
+                 current_setting('shared_preload_libraries') LIKE '%pgaudit%',
+                 current_setting('password_encryption')"
+        readlink /var/lib/pgsql/{{ postgresql_version }}/data/pg_wal
+      become: true
+      become_user: postgres
+      register: validate_pg
+      changed_when: false
+      failed_when: false
+
+    - name: Pg_hba rejects every other-environment IP
+      ansible.builtin.command: >-
+        {{ validate_pg_bin }}/psql -XAtq -h /run/postgresql -d postgres -c
+        "SELECT count(DISTINCT address) FROM pg_hba_file_rules
+         WHERE auth_method = 'reject' AND address IN ('{{ pgc_foreign_ips | join("','") }}')"
+      become: true
+      become_user: postgres
+      register: validate_hba
+      changed_when: false
+      failed_when: false
+
+    - name: Pgbouncer admin console and login (auth_query)
+      ansible.builtin.shell: |
+        set -e
+        sudo -u postgres {{ validate_pg_bin }}/psql -XAtq -h /run/pgbouncer -p 6432 -U postgres pgbouncer -c "SHOW VERSION" >/dev/null
+        PGPASSWORD="$CHECK_PW" {{ validate_pg_bin }}/psql -XAtq \
+          "host=127.0.0.1 port=6432 dbname=postgres user={{ validate_check_user }}" -c "SELECT 1"
+      environment:
+        CHECK_PW: "{{ validate_check_password }}"
+      register: validate_pgb
+      changed_when: false
+      failed_when: false
+
+    - name: HAProxy backends (1 primary UP, n-1 replicas UP)
+      ansible.builtin.shell: |
+        set -o pipefail
+        echo "show stat" | socat stdio /var/lib/haproxy/stats | awk -F, '$2 != "BACKEND" && $2 != "FRONTEND" && $18 == "UP" {print $1}' | sort | uniq -c
+      register: validate_haproxy
+      changed_when: false
+      failed_when: false
+
+    - name: Metrics endpoints answer
+      ansible.builtin.shell: |
+        set -o pipefail
+        for p in {{ validate_metrics_ports | join(' ') }}; do
+          printf '%s=%s ' "$p" "$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 http://{{ ansible_host }}:$p/metrics)"
+        done
+        printf 'pg_up=%s ' "$(curl -s --max-time 5 http://{{ ansible_host }}:9187/metrics | awk '/^pg_up /{print $2}')"
+        printf 'pgbouncer_up=%s' "$(curl -s --max-time 5 http://{{ ansible_host }}:9127/metrics | awk '/^pgbouncer_up /{print $2}')"
+      register: validate_metrics
+      changed_when: false
+      failed_when: false
+
+    # The other environment must be unreachable from here (egress policy); every connection attempt must fail.
+    - name: Other environment is unreachable
+      ansible.builtin.shell: |
+        open=""
+        for ip in {{ pgc_foreign_ips | join(' ') }}; do
+          for p in {{ validate_isolated_ports | join(' ') }}; do
+            timeout 3 bash -c "</dev/tcp/$ip/$p" 2>/dev/null && open="$open $ip:$p"
+          done
+        done
+        echo "open:${open:- none}"
+      register: validate_isolation
+      changed_when: false
+      failed_when: false
+
+    - name: Firewalld egress policy rejects the other environment
+      ansible.builtin.command: firewall-cmd --policy={{ firewall_egress_policy | default('pgc-egress') }} --list-rich-rules
+      register: validate_fw
+      changed_when: false
+      failed_when: false
+
+    - name: Watchdog ready for Patroni
+      ansible.builtin.shell: |
+        set -o pipefail
+        lsmod | grep -q '^softdog ' && stat -c %U /dev/watchdog
+      register: validate_wd
+      changed_when: false
+      failed_when: false
+
+    - name: SELinux denials for cluster components since boot (reported, not fatal)
+      ansible.builtin.shell: |
+        set -o pipefail
+        ausearch -m avc -ts boot 2>/dev/null | grep -cE 'comm="(haproxy|keepalived|postgres|patroni|pgbouncer|etcd|curl|[a-z]+_exporter)"' || true
+      register: validate_avc
+      changed_when: false
+      failed_when: false
+
+    - name: VIP holder
+      ansible.builtin.command: ip -o -4 addr show to {{ cluster_vip }}
+      register: validate_vip
+      changed_when: false
+      failed_when: false
+
+    # ---- cluster-wide (once) -----------------------------------------------------------------------------------
+    - name: Etcd health
+      ansible.builtin.command: /usr/local/bin/etcdctl-pgc endpoint health --cluster -w json   # sudo secure_path lacks /usr/local/bin
+      register: validate_etcd
+      changed_when: false
+      failed_when: false
+      run_once: true
+
+    - name: Patroni topology
+      ansible.builtin.command: "{{ validate_patronictl }} list -f json"
+      register: validate_patroni
+      changed_when: false
+      failed_when: false
+      run_once: true
+
+    - name: Login through the VIP (5000 -> primary, 5001 -> replica)
+      ansible.builtin.command: >-
+        {{ validate_pg_bin }}/psql -XAtq
+        "host={{ cluster_vip }} port={{ item }} dbname=postgres user={{ validate_check_user }}"
+        -c "SELECT pg_is_in_recovery()"
+      environment:
+        PGPASSWORD: "{{ validate_check_password }}"
+      loop: [5000, 5001]
+      register: validate_vip_login
+      changed_when: false
+      failed_when: false
+      run_once: true
+
+    # ---- evaluate ----------------------------------------------------------------------------------------------
+    - name: Evaluate node checks
+      ansible.builtin.set_fact:
+        validate_node_results:
+          selinux_enforcing: "{{ validate_selinux.stdout == 'Enforcing' }}"
+          services_active: "{{ validate_svc.rc == 0 }}"
+          pg_checksums_pgaudit_scram: "{{ (validate_pg.stdout_lines | first | default('')) == 'on|t|scram-sha-256' }}"
+          pg_wal_on_pgwal: "{{ (validate_pg.stdout_lines | last | default('')) is match('^/pgwal/') }}"
+          pg_hba_rejects_other_env: "{{ (validate_hba.stdout | default('0') | int) == pgc_foreign_ips | length }}"
+          pgbouncer_admin_and_login: "{{ validate_pgb.rc == 0 and validate_pgb.stdout == '1' }}"
+          haproxy_backends: >-
+            {{ '1 primary' in (validate_haproxy.stdout_lines | map('trim') | list) and
+               ((validate_nodes | int - 1) ~ ' replicas') in (validate_haproxy.stdout_lines | map('trim') | list) }}
+          metrics_endpoints: >-
+            {{ (validate_metrics.stdout.split() | sort) ==
+               ((validate_metrics_ports | map('string') | map('regex_replace', '$', '=200') | list)
+                + ['pg_up=1', 'pgbouncer_up=1']) | sort }}
+          other_env_unreachable: "{{ validate_isolation.stdout == 'open: none' }}"
+          egress_policy_rules: "{{ pgc_foreign_ips | reject('in', validate_fw.stdout) | list | length == 0 }}"
+          watchdog_owned_by_postgres: "{{ validate_wd.stdout == 'postgres' }}"
+
+    - name: Evaluate cluster checks
+      ansible.builtin.set_fact:
+        validate_cluster_results:
+          etcd_all_healthy: >-
+            {{ validate_etcd.rc == 0 and
+               (validate_etcd.stdout | from_json | selectattr('health', 'equalto', true) | list | length) == validate_nodes | int }}
+          patroni_one_leader: >-
+            {{ validate_patroni.rc == 0 and
+               (validate_patroni.stdout | from_json | selectattr('Role', 'equalto', 'Leader') | list | length) == 1 }}
+          patroni_replicas_streaming: >-
+            {{ validate_patroni.rc == 0 and
+               (validate_patroni.stdout | from_json | selectattr('State', 'equalto', 'streaming') | list | length) == validate_nodes | int - 1 }}
+          patroni_one_timeline: >-
+            {{ validate_patroni.rc == 0 and
+               (validate_patroni.stdout | from_json | map(attribute='TL') | unique | list | length) == 1 }}
+          replica_lag_ok: >-
+            {{ validate_patroni.rc == 0 and
+               (validate_patroni.stdout | from_json | map(attribute='Replay Lag', default=0) | select('number')
+                | select('gt', validate_max_lag_mb) | list | length) == 0 }}
+          vip_on_exactly_one_node: >-
+            {{ ansible_play_hosts | map('extract', hostvars, ['validate_vip', 'stdout']) | select('truthy') | list | length == 1 }}
+          vip_5000_reaches_primary: "{{ validate_vip_login.results[0].stdout == 'f' }}"
+          vip_5001_reaches_replica: "{{ validate_vip_login.results[1].stdout == 't' }}"
+      run_once: true
+
+    - name: Report
+      ansible.builtin.debug:
+        msg:
+          node: "{{ validate_node_results }}"
+          cluster: "{{ validate_cluster_results if inventory_hostname == ansible_play_hosts[0] else 'see first host' }}"
+          vip_here: "{{ validate_vip.stdout | length > 0 }}"
+          selinux_denials_since_boot: "{{ validate_avc.stdout }}"
+          isolation_probe: "{{ validate_isolation.stdout }}"
+          etcd_error: "{{ (validate_etcd.stderr | default('')) if inventory_hostname == ansible_play_hosts[0] else '' }}"
+
+    - name: All checks passed
+      ansible.builtin.assert:
+        that:
+          - validate_node_results.values() | reject | list | length == 0
+          - validate_cluster_results.values() | reject | list | length == 0
+        fail_msg: >-
+          Failed: {{ (validate_node_results | dict2items | rejectattr('value') | map(attribute='key') | list)
+                     + (validate_cluster_results | dict2items | rejectattr('value') | map(attribute='key') | list) }}
+        success_msg: All checks passed
+        quiet: true
+
+# ---------------------------------------------------------------------------------------------------------------
+# Disruptive tests. Only with --tags disruptive. Each test restores a healthy cluster; the leader may end up on a
+# different node than before (that is normal for Patroni).
+- name: Validate failover behaviour (disruptive)
+  hosts: pg_nodes
+  become: true
+  gather_facts: false
+  tags: [never, disruptive]
+  vars:
+    validate_pg_bin: "/usr/pgsql-{{ postgresql_version }}/bin"
+    validate_patronictl: patronictl -c /etc/patroni/patroni.yml
+    validate_nodes: "{{ groups['pg_nodes'] | length }}"
+    validate_check_user: rewind_user
+    validate_check_password: "{{ vault_rewind_password }}"
+  tasks:
+    - name: Current topology
+      ansible.builtin.command: "{{ validate_patronictl }} list -f json"
+      register: validate_d_before
+      changed_when: false
+      run_once: true
+
+    - name: Pick leader and switchover candidate
+      ansible.builtin.set_fact:
+        validate_d_leader: "{{ (validate_d_before.stdout | from_json | selectattr('Role', 'equalto', 'Leader') | first).Member }}"
+        # Synchronous mode: a replica may take over only after the leader has named it Sync Standby
+        validate_d_sync: "{{ validate_d_before.stdout | from_json | selectattr('Role', 'equalto', 'Sync Standby') | list | length > 0 }}"
+        # In synchronous mode Patroni only switches over to the Sync Standby
+        validate_d_candidate: >-
+          {{ ((validate_d_before.stdout | from_json | selectattr('Role', 'equalto', 'Sync Standby') | list)
+              + (validate_d_before.stdout | from_json | selectattr('State', 'equalto', 'streaming') | list)) | map(attribute='Member') | first }}
+      run_once: true
+
+    # 1. Planned switchover
+    - name: "Switchover: leader -> candidate"
+      ansible.builtin.command: >-
+        {{ validate_patronictl }} switchover {{ cluster_name }}
+        --leader {{ validate_d_leader }} --candidate {{ validate_d_candidate }} --force
+      changed_when: true
+      run_once: true
+
+    - name: "Switchover: wait for new leader and streaming replicas"
+      ansible.builtin.command: "{{ validate_patronictl }} list -f json"
+      register: validate_d_sw
+      changed_when: false
+      until: >-
+        (validate_d_sw.stdout | from_json | selectattr('Role', 'equalto', 'Leader') | map(attribute='Member') | list) == [validate_d_candidate]
+        and (validate_d_sw.stdout | from_json | selectattr('State', 'equalto', 'streaming') | list | length) == validate_nodes | int - 1
+        and (not validate_d_sync or (validate_d_sw.stdout | from_json | selectattr('Role', 'equalto', 'Sync Standby') | list | length) == 1)
+      retries: 30
+      delay: 5
+      run_once: true
+
+    - name: "Switchover: VIP:5000 reaches the new primary"
+      ansible.builtin.command: >-
+        {{ validate_pg_bin }}/psql -XAtq "host={{ cluster_vip }} port=5000 dbname=postgres user={{ validate_check_user }}"
+        -c "SELECT pg_is_in_recovery()"
+      environment:
+        PGPASSWORD: "{{ validate_check_password }}"
+      register: validate_d_sw_login
+      changed_when: false
+      until: validate_d_sw_login.rc == 0 and validate_d_sw_login.stdout == 'f'
+      retries: 10
+      delay: 3
+      run_once: true
+
+    # 2. Unplanned: Patroni stops on the leader, another node must take over
+    - name: "Leader loss: stop Patroni on the leader"
+      ansible.builtin.systemd_service:
+        name: patroni
+        state: stopped
+      delegate_to: "{{ validate_d_candidate }}"
+      run_once: true
+
+    - name: "Leader loss: wait for another leader"
+      ansible.builtin.command: "{{ validate_patronictl }} list -f json"
+      register: validate_d_fo
+      changed_when: false
+      until: >-
+        validate_d_fo.rc == 0 and
+        (validate_d_fo.stdout | from_json | selectattr('Role', 'equalto', 'Leader') | rejectattr('Member', 'equalto', validate_d_candidate)
+         | list | length) == 1
+      retries: 30
+      delay: 5
+      delegate_to: "{{ validate_d_leader }}"
+      run_once: true
+
+    - name: "Leader loss: VIP:5000 reaches the new primary"
+      ansible.builtin.command: >-
+        {{ validate_pg_bin }}/psql -XAtq "host={{ cluster_vip }} port=5000 dbname=postgres user={{ validate_check_user }}"
+        -c "SELECT pg_is_in_recovery()"
+      environment:
+        PGPASSWORD: "{{ validate_check_password }}"
+      register: validate_d_fo_login
+      changed_when: false
+      until: validate_d_fo_login.rc == 0 and validate_d_fo_login.stdout == 'f'
+      retries: 10
+      delay: 3
+      delegate_to: "{{ validate_d_leader }}"
+      run_once: true
+
+    - name: "Leader loss: start Patroni again on the old leader"
+      ansible.builtin.systemd_service:
+        name: patroni
+        state: started
+      delegate_to: "{{ validate_d_candidate }}"
+      run_once: true
+
+    - name: "Leader loss: wait until the old leader streams as a replica"
+      ansible.builtin.command: "{{ validate_patronictl }} list -f json"
+      register: validate_d_rejoin
+      changed_when: false
+      until: >-
+        (validate_d_rejoin.stdout | from_json | selectattr('State', 'equalto', 'streaming') | list | length) == validate_nodes | int - 1
+        and (not validate_d_sync or (validate_d_rejoin.stdout | from_json | selectattr('Role', 'equalto', 'Sync Standby') | list | length) == 1)
+      retries: 30
+      delay: 5
+      run_once: true
+
+    # 3. VIP move: HAProxy stops on the VIP holder
+    - name: "VIP move: find the holder"
+      ansible.builtin.command: ip -o -4 addr show to {{ cluster_vip }}
+      register: validate_d_vip
+      changed_when: false
+
+    - name: "VIP move: holder"
+      ansible.builtin.set_fact:
+        validate_d_vip_holder: >-
+          {{ ansible_play_hosts | map('extract', hostvars) | selectattr('validate_d_vip.stdout', 'truthy')
+             | map(attribute='inventory_hostname') | first }}
+      run_once: true
+
+    - name: "VIP move: stop HAProxy on the holder"
+      ansible.builtin.systemd_service:
+        name: haproxy
+        state: stopped
+      when: inventory_hostname == validate_d_vip_holder
+
+    - name: "VIP move: let keepalived react"
+      ansible.builtin.pause:
+        seconds: 10
+      run_once: true
+
+    - name: "VIP move: find the new holder"
+      ansible.builtin.command: ip -o -4 addr show to {{ cluster_vip }}
+      register: validate_d_vip2
+      changed_when: false
+
+    - name: "VIP move: VIP left the old holder and sits on exactly one node"
+      ansible.builtin.assert:
+        that:
+          - hostvars[validate_d_vip_holder].validate_d_vip2.stdout | length == 0
+          - ansible_play_hosts | map('extract', hostvars, ['validate_d_vip2', 'stdout']) | select('truthy') | list | length == 1
+        fail_msg: "VIP did not move away from {{ validate_d_vip_holder }}"
+        quiet: true
+      run_once: true
+
+    - name: "VIP move: VIP:5000 still reaches the primary"
+      ansible.builtin.command: >-
+        {{ validate_pg_bin }}/psql -XAtq "host={{ cluster_vip }} port=5000 dbname=postgres user={{ validate_check_user }}"
+        -c "SELECT pg_is_in_recovery()"
+      environment:
+        PGPASSWORD: "{{ validate_check_password }}"
+      register: validate_d_vip_login
+      changed_when: false
+      until: validate_d_vip_login.rc == 0 and validate_d_vip_login.stdout == 'f'
+      retries: 10
+      delay: 3
+      run_once: true
+
+    - name: "VIP move: start HAProxy again"
+      ansible.builtin.systemd_service:
+        name: haproxy
+        state: started
+      when: inventory_hostname == validate_d_vip_holder
+
+    - name: Final topology
+      ansible.builtin.command: "{{ validate_patronictl }} list"
+      register: validate_d_after
+      changed_when: false
+      run_once: true
+
+    - name: Show final topology
+      ansible.builtin.debug:
+        msg: "{{ validate_d_after.stdout_lines }}"
+      run_once: true

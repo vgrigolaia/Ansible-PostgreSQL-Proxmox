@@ -1,0 +1,23 @@
+---
+common_packages:
+  - chrony
+  - tuned
+  - lvm2
+  - xfsprogs
+  - cloud-utils-growpart
+  - policycoreutils-python-utils   # semanage
+  - python3-libselinux
+  - python3-policycoreutils        # Ansible seport/sefcontext
+  - firewalld
+  - rsync
+  - tar
+  - curl
+  - jq
+  - vim-enhanced
+  - bash-completion
+
+# Full dnf upgrade (and reboot if needed, one node at a time). Off by default; run with -e common_os_upgrade=true.
+common_os_upgrade: false
+
+common_tuned_profile: pgc-postgres
+common_vm_swappiness: 1

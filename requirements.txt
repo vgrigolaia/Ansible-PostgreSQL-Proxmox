@@ -1,0 +1,7 @@
+# Workstation Python dependencies (install into .venv).
+ansible-core>=2.20,<2.21
+proxmoxer>=2.2
+requests>=2.32
+cryptography>=43    # community.crypto: CA and certificate signing on the workstation
+ansible-lint>=25.0
+yamllint>=1.35

@@ -1,0 +1,9 @@
+---
+# Verified 2026-10-08 against the GitHub release (sha256sums.txt)
+postgres_exporter_version: 0.20.1
+postgres_exporter_sha256: 89d4f7e7920cad48fdc3133f789556ef5253c330a9f5fdace3bdb6344c0a8b5a
+postgres_exporter_release: "https://github.com/prometheus-community/postgres_exporter/releases/download/v{{ postgres_exporter_version }}"
+postgres_exporter_url: "{{ postgres_exporter_release }}/postgres_exporter-{{ postgres_exporter_version }}.linux-amd64.tar.gz"
+postgres_exporter_port: 9187
+postgres_exporter_user: monitoring      # PostgreSQL role, member of pg_monitor
+postgres_exporter_patroni_port: 8008

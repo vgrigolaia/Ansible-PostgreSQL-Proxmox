@@ -19,6 +19,13 @@ vm_scsihw: virtio-scsi-single
 vm_os_disk_slot: scsi0
 pve_pool: postgresql-pool              # one pool for the template and all dev + prod VMs
 
+# Proxmox HA (PVE 9 HA rules). PVE HA only (re)starts VMs; Patroni does the database failover.
+# Each VM prefers its home node (vm_pve_node) through a non-strict node-affinity rule: if that node fails,
+# HA restarts the VM on another node, and moves it back (failback) once the home node is online again.
+pve_ha_enabled: true
+pve_ha_max_restart: 1                  # restart attempts on the same node after a failed start
+pve_ha_max_relocate: 1                 # attempts on another node after that
+
 # cloud-init login user: SSH is key-only, the password is for console login
 vm_ci_user: ansible
 vm_ci_password: "{{ vault_vm_ci_password }}"

@@ -75,3 +75,8 @@
     vmid: "{{ proxmox_vm_id | int }}"
     node: "{{ proxmox_vm_node }}"
     state: started
+  when: not pve_ha_enabled | bool
+
+- name: Proxmox HA, which also starts the VM - {{ vm_host }}
+  ansible.builtin.include_tasks: ha.yml
+  when: pve_ha_enabled | bool

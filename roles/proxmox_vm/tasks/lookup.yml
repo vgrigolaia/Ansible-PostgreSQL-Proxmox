@@ -5,6 +5,7 @@
     proxmox_vm_id: "{{ hostvars[vm_host].vm_id | int }}"
     proxmox_vm_node: "{{ hostvars[vm_host].vm_pve_node }}"
     proxmox_vm_ip: "{{ hostvars[vm_host].ansible_host }}"
+    proxmox_vm_ha_rule: "pgc-{{ vm_host }}-home"     # validate.yml checks the same name
 
 - name: Guard - VM ID belongs to this environment - {{ vm_host }}
   ansible.builtin.assert:

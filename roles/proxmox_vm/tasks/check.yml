@@ -10,7 +10,13 @@
       - "node={{ proxmox_vm_node }} storage={{ pve_storage }} pool={{ pve_pool }} cpu={{ vm_cpu_type }} cores={{ vm_cores }} memory={{ vm_memory_mb }}MB"
       - "ip={{ proxmox_vm_ip }}/{{ net_prefix }} gw={{ net_gateway }} dns={{ net_dns_servers | join(',') }} user={{ vm_ci_user }}"
       - "controller={{ vm_scsihw }} disks: {{ vm_os_disk_slot }} OS {{ vm_os_disk_gb }}G; {{ proxmox_vm_disk_summary }}"
+      - "{{ proxmox_vm_ha_plan }}"
   vars:
+    proxmox_vm_ha_plan: >-
+      {{ ('ha: resource vm:' ~ proxmox_vm_id ~ ' state=started max_restart=' ~ pve_ha_max_restart
+          ~ ' max_relocate=' ~ pve_ha_max_relocate ~ '; rule ' ~ proxmox_vm_ha_rule
+          ~ ' node-affinity ' ~ proxmox_vm_node ~ ' non-strict (failback)')
+         if pve_ha_enabled | bool else 'ha: off (VM started directly)' }}
     proxmox_vm_action: >-
       {{ ('exists on ' ~ proxmox_vm_existing.proxmox_vms[0].node ~ ', will update config')
          if proxmox_vm_existing.proxmox_vms else ('will full-clone from ' ~ pve_template_vmid) }}

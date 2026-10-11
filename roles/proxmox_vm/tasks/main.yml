@@ -18,6 +18,28 @@
     fail_msg: "Missing values in inventories/{{ pgc_env }} (network, sizing, disk sizes, API token or SSH keys)."
     quiet: true
 
+# HA rules (node-affinity) exist since Proxmox VE 9.0; on 8.x the rule API is missing.
+- name: Read Proxmox VE version
+  ansible.builtin.uri:
+    url: "https://{{ pve_api_host }}:8006/api2/json/version"
+    headers:
+      Authorization: "PVEAPIToken={{ pve_api_token_id }}={{ pve_api_token_secret }}"
+    validate_certs: "{{ pve_api_validate_certs }}"
+  register: proxmox_vm_pve_version
+  check_mode: false    # read-only GET, needed for the check below in --check runs too
+  no_log: true         # the request carries the token secret
+  when: pve_ha_enabled | bool
+
+- name: Assert Proxmox VE 9 or newer for HA rules
+  ansible.builtin.assert:
+    that:
+      - proxmox_vm_pve_version.json.data.version.split('.')[0] | int >= 9
+    fail_msg: >-
+      pve_ha_enabled needs Proxmox VE 9 or newer (HA node-affinity rules); the cluster runs
+      {{ proxmox_vm_pve_version.json.data.version }}. Upgrade or set pve_ha_enabled: false.
+    quiet: true
+  when: pve_ha_enabled | bool
+
 - name: Look up template {{ pve_template_vmid }}
   community.proxmox.proxmox_vm_info:
     vmid: "{{ pve_template_vmid }}"

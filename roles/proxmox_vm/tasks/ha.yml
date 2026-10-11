@@ -1,0 +1,23 @@
+---
+# Proxmox HA for one VM (vm_host): HA resource + non-strict node-affinity rule to its home node.
+# Takes over "start the VM": the HA manager starts it and keeps it running (requested state 'started').
+- name: HA resource - {{ vm_host }}
+  community.proxmox.proxmox_cluster_ha_resources:
+    name: "vm:{{ proxmox_vm_id }}"
+    state: present
+    hastate: started
+    comment: "pgc {{ pgc_env }} {{ vm_host }}"   # non-empty: an empty comment is not returned by the API and never compares equal
+    max_restart: "{{ pve_ha_max_restart | int }}"
+    max_relocate: "{{ pve_ha_max_relocate | int }}"
+  # The module has no check mode, so --check skips this task; check.yml prints the HA plan instead.
+
+- name: HA node-affinity rule to its home node - {{ vm_host }}
+  community.proxmox.proxmox_cluster_ha_rules:
+    name: "{{ proxmox_vm_ha_rule }}"
+    state: present
+    type: node-affinity
+    nodes: ["{{ proxmox_vm_node }}"]
+    strict: false      # may run elsewhere while the home node is down; failback moves it home again
+    resources: ["vm:{{ proxmox_vm_id }}"]
+    comment: "pgc {{ pgc_env }}: {{ vm_host }} prefers {{ proxmox_vm_node }}"
+    disable: false

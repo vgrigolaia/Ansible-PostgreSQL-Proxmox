@@ -29,6 +29,7 @@ AlmaLinux 10 · PostgreSQL 18 · Patroni · etcd · pgbouncer · HAProxy · keep
 Per environment, the project produces a self-contained PostgreSQL service with:
 
 - **Automatic failover.** Patroni promotes a replica when the primary fails. Clients keep using the same address.
+- **Proxmox HA.** Each VM is HA-managed and prefers its own Proxmox node. If a node dies, its VM is restarted on another node and moves back when the node returns.
 - **One stable endpoint.** A virtual IP, with port 5000 for read/write and 5001 for read-only.
 - **Connection pooling.** pgbouncer runs in transaction mode on every node.
 - **Repeatable builds.** Everything from the VM template to the monitoring exporters is code: idempotent, reviewable with `--check --diff`, and verified by a validation playbook.

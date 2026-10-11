@@ -57,7 +57,11 @@ On freshly created VMs the dry run of a component step can only show the package
 | Outbound HTTPS from the template node to `repo.almalinux.org` | ISO download | `curl -sI https://repo.almalinux.org/` |
 | Free VM IDs: 1 for the template + 3 per environment | | `pvesh get /cluster/resources --type vm` |
 
-The DB VMs must **not** be put under Proxmox HA. Patroni does the failover.
+**Proxmox HA** (`pve_ha_enabled: true`, the default). The playbook puts each DB VM under Proxmox HA with a non-strict node-affinity rule to its own node. The two layers do different jobs:
+- **Patroni** fails the *database* over to a replica within seconds, as before.
+- **Proxmox HA** restarts a crashed VM. If a Proxmox node dies, HA restarts that node's VM on another node after fencing (about 2 minutes), so etcd and Patroni get their third member back. When the node is online again, the VM moves back to it (failback).
+
+While a node is down, two DB VMs of the same environment share one Proxmox node. Losing that node as well would cost etcd its quorum, so bring the failed node back first. HA needs Proxmox VE 9 (HA rules), shared VM storage (Ceph RBD) and the HA privileges in section 4. Set `pve_ha_enabled: false` to manage the VMs without Proxmox HA.
 
 ### 1.2 Network
 
@@ -224,6 +228,8 @@ Provisioning refuses to run while any of these is empty.
 | `vm_cpu_type` | x86-64-v3 | Keep |
 | `pve_pool` | postgresql-pool | Must exist (section 4) |
 | `vm_ci_user` | ansible | Login user on the VMs; Ansible connects as this user |
+| `pve_ha_enabled` | true | Put the VMs under Proxmox HA (section 1.1). Needs PVE 9 and the HA privileges (section 4) |
+| `pve_ha_max_restart` / `pve_ha_max_relocate` | 1 / 1 | HA start retries on the same node, then on another node |
 | `vm_ci_ssh_pubkey_file` | `~/.ssh/id_ed25519.pub` | Public key installed for `vm_ci_user`. For several keys, set `vm_ci_ssh_keys` to a list instead. |
 
 If your private key is not the SSH default and not in an agent, add `ansible_ssh_private_key_file: ~/.ssh/<key>` to `inventories/<env>/group_vars/pg_nodes.yml`.
@@ -257,10 +263,14 @@ pveum acl modify /pool/postgresql-pool         --users ansible@pve --roles PVEVM
 pveum acl modify /vms/9000                     --users ansible@pve --roles PVETemplateUser
 pveum acl modify /storage/RBD-Disk             --users ansible@pve --roles PVEDatastoreUser
 pveum acl modify /sdn/zones/localnetwork/vmbr0 --users ansible@pve --roles PVESDNUser
+
+# Proxmox HA (only with pve_ha_enabled: true). The HA API checks these on / and has no finer scope.
+pveum role add PGC-HA --privs "Sys.Audit,Sys.Console"
+pveum acl modify / --users ansible@pve --roles PGC-HA --propagate 0
 ```
 Replace `9000`, `RBD-Disk` and `vmbr0` with your values.
 
-This permission set is a least-privilege starting point. This exact set hasn't been run end-to-end yet. If provisioning stops with `403 Permission check failed (<path>, <privilege>)`, grant that privilege on that path and re-run; nothing is half-created. Adding VMs to the pool may also need `Pool.Allocate` on `/pool/postgresql-pool`.
+`Sys.Console` on `/` is what the Proxmox API requires to create HA resources and rules (`Sys.Audit` to read them); it also allows console access to the nodes, so keep the token secret in the vault only. This permission set is a least-privilege starting point. This exact set hasn't been run end-to-end yet. If provisioning stops with `403 Permission check failed (<path>, <privilege>)`, grant that privilege on that path and re-run; nothing is half-created. Adding VMs to the pool may also need `Pool.Allocate` on `/pool/postgresql-pool`.
 
 Test the token. Run on: **workstation**
 ```bash
@@ -392,9 +402,16 @@ Leftovers you may delete by hand once the template exists: `/root/pgc-ks-9000` o
 1. Full-clone the template to the environment's three VM IDs, each on its own node.
 2. Set CPU, RAM and cloud-init (static IP, gateway, DNS, user, password, SSH keys).
 3. Grow the OS disk, add the three PostgreSQL disks with serials `pgdata`, `pgwal`, `pgaudit`, and put the VMs in the pool.
-4. Start the VMs and wait for SSH.
+4. With `pve_ha_enabled`: add each VM as an HA resource (requested state `started`) plus a rule `pgc-<vm>-home` that prefers its own node; the HA manager starts the VMs. Without it, start the VMs directly.
+5. Wait for SSH.
 
-The dry run prints a plan per VM and checks the safety guards, without changing anything.
+The dry run prints a plan per VM, including its HA resource and rule, and checks the safety guards, without changing anything. The HA resource task shows as `skipped` in `--check` (the module has no check mode).
+
+Check HA afterwards. Run on: **Proxmox node** (any)
+```bash
+ha-manager status            # expect: service vm:<id> (<home node>, started) for each VM
+ha-manager rules config      # expect: pgc-<vm>-home, node-affinity, one per VM
+```
 
 Run on: **workstation**
 ```bash
@@ -680,6 +697,9 @@ ansible-playbook $INV $VAULT playbooks/site.yml --tags baseline,patroni,pgbounce
 | Patroni install: `nothing provides python3-click` | EPEL repo not set up | Re-run `--tags patroni`; the role adds the restricted EPEL repo |
 | A replica's `pg_wal` is a plain directory | It was cloned without `--waldir` | On any node: `sudo patronictl -c /etc/patroni/patroni.yml reinit <scope> <member>` (runbook §5) |
 | VIP doesn't move / clients can't reach it after a move | VRRP or gratuitous ARP filtered on the bridge or switch | Allow IP protocol 112 between the nodes and GARP on the segment |
+| `assert ... Proxmox VE 9 or newer for HA rules` | Cluster on PVE 8 | Upgrade, or set `pve_ha_enabled: false` |
+| `403 ... (/, Sys.Console)` or `(/, Sys.Audit)` | HA privileges missing | Section 4, Proxmox HA lines |
+| validate: `<vm> ha_on_home_node` failed | The VM runs on another node: its home node is down, in maintenance, or failback is still running | `ha-manager status`; bring the home node back (runbook §14) |
 | `ERROR: Ansible requires blocking IO on stdin/stdout/stderr` | Output redirected in some shells | Run in a normal terminal without redirecting stderr |
 
 ---
@@ -691,6 +711,7 @@ The project never deletes anything in Proxmox. Removing an environment is a manu
 Run on: **Proxmox node**, as root, for each of the environment's VM IDs (dev: 231, 232, 233)
 ```bash
 qm config 231 | grep -E '^(name|tags)'      # confirm it's the right VM before destroying it
+ha-manager remove vm:231                    # if HA-managed: also removes rule pgc-<vm>-home (it only references this VM)
 qm stop 231
 qm destroy 231 --purge                      # deletes the VM and its disks; --purge also drops it from pool and job configs
 ```

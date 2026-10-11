@@ -179,7 +179,36 @@ ansible-playbook $INV $VAULT playbooks/validate.yml --tags disruptive
 ```
 It does a switchover, stops Patroni on the new leader (another node must take over, then it rejoins), and stops HAProxy on the VIP holder (the VIP must move). Each step checks that `VIP:5000` still reaches a primary and restores the cluster. The leader may end up on another node.
 
-## 14. Not covered yet
+## 14. Proxmox HA and Proxmox node maintenance
+
+Each DB VM is an HA resource (`vm:<id>`, requested state `started`) with a non-strict node-affinity rule `pgc-<vm>-home` to its own node. Patroni still does the database failover; Proxmox HA only (re)starts VMs.
+
+Show HA state. Run on: **any Proxmox node**
+```bash
+ha-manager status                 # each vm:<id> should be "started" on its home node
+ha-manager rules config
+```
+
+**A Proxmox node fails.** Patroni promotes a replica within seconds (section 3). After fencing (about 2 minutes) HA restarts the failed node's VM on another node, and Patroni rejoins it as a replica. Two VMs of the same environment now share one node, so a second failure of that node would cost etcd its quorum: repair the failed node first. When it is back online, HA moves the VM home again (failback). `validate.yml` fails `ha_on_home_node` until then.
+
+**Planned maintenance on a Proxmox node** (updates, reboot). Do one node at a time. Run the Patroni part on **any DB VM** and the HA part on **any Proxmox node**:
+```bash
+pctl list                                             # DB VM: if the VM on this node is Leader, switch over first (section 2)
+ha-manager crm-command node-maintenance enable pve02  # Proxmox: HA live-migrates the node's HA VMs to other nodes
+ha-manager status                                     # Proxmox: wait until no pgc VM runs on pve02
+#   ... maintenance, reboot ...
+ha-manager crm-command node-maintenance disable pve02 # Proxmox: the VMs migrate back to pve02
+```
+Maintenance mode survives a reboot of the node; it stays on until you disable it. Without maintenance mode, a node *reboot* freezes its HA VMs, which come back up on the same node after the reboot (default shutdown policy `conditional`).
+
+**Stop a DB VM on purpose.** HA keeps VMs running: a VM shut down from inside the guest is started again. Ask HA instead. Run on: **any Proxmox node**
+```bash
+ha-manager set vm:232 --state stopped      # stop and keep stopped
+ha-manager set vm:232 --state started      # start again
+```
+Re-running `provision.yml --tags vms` also sets every VM back to `started`.
+
+## 15. Not covered yet
 
 - Backups / point-in-time recovery (planned: pgBackRest).
 - Alert rules for Prometheus.

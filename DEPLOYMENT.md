@@ -61,7 +61,7 @@ On freshly created VMs the dry run of a component step can only show the package
 - **Patroni** fails the *database* over to a replica within seconds, as before.
 - **Proxmox HA** restarts a crashed VM. If a Proxmox node dies, HA restarts that node's VM on another node after fencing (about 2 minutes), so etcd and Patroni get their third member back. When the node is online again, the VM moves back to it (failback).
 
-While a node is down, two DB VMs of the same environment share one Proxmox node. Losing that node as well would cost etcd its quorum, so bring the failed node back first. HA needs Proxmox VE 9 (HA rules), shared VM storage (Ceph RBD) and the HA privileges in section 4. Set `pve_ha_enabled: false` to manage the VMs without Proxmox HA.
+While a node is down, two DB VMs of the same environment share one Proxmox node. Losing that node as well would cost etcd its quorum, so bring the failed node back first. HA needs Proxmox VE 9 (HA rules), shared VM storage (Ceph RBD) and the HA privileges in section 4. Set `pve_ha_enabled: false` to manage the VMs without Proxmox HA. Full explanation, requirements and failure scenarios: [docs/proxmox-ha.md](docs/proxmox-ha.md).
 
 ### 1.2 Network
 
@@ -185,6 +185,8 @@ vm_pve_node: pve01     # Proxmox node that hosts this VM; the three VMs must be 
 keepalived_priority: 100   # 100 / 90 / 80: highest gets the VIP first
 ```
 
+**Node names must be the real Proxmox node names** (`pvecm nodes`, column `Name`, case-sensitive) in `vm_pve_node`, `pve_template_node` and the `pve_nodes` hosts of `hosts.yml`. They are passed to the Proxmox API and used in the HA rules; `pve01` is only the reference name.
+
 ### 3.5 Sizing: `inventories/<env>/group_vars/all/main.yml`
 
 | Variable | Reference (dev) | Rules |
@@ -252,29 +254,50 @@ Renaming them is a code change, not configuration.
 
 ## 4. Proxmox preparation
 
-Create a dedicated user, the pool and an API token. Run on: **Proxmox node** (any, as root)
+The playbooks talk to Proxmox through one API token. You can create a dedicated user for it (recommended) or use an existing one. Set the names once in the shell; every command below uses them. A Proxmox user ID always includes the realm (`@pve` or `@pam`), and the full token ID is `<user>!<token>`, for example `ansible@pve!ansible-auth`.
+
+**4.1 User, pool and token.** Run on: **Proxmox node** (any, as root)
 ```bash
-pveum user add ansible@pve --comment "ansible-postgres-proxmox automation"
+PVE_USER='ansible@pve'          # or an existing user, e.g. 'vgrigolaia@pve'
+PVE_TOKEN='ansible-auth'
+
+pveum user add "$PVE_USER" --comment "ansible-postgres-proxmox automation"   # skip for an existing user
 pveum pool add postgresql-pool --comment "PostgreSQL cluster VMs"
-pveum user token add ansible@pve ansible-auth --privsep 0
-#   prints the token id (ansible@pve!ansible-auth) and the secret ONCE: store the secret in your password manager now
-
-pveum acl modify /pool/postgresql-pool         --users ansible@pve --roles PVEVMAdmin
-pveum acl modify /vms/9000                     --users ansible@pve --roles PVETemplateUser
-pveum acl modify /storage/RBD-Disk             --users ansible@pve --roles PVEDatastoreUser
-pveum acl modify /sdn/zones/localnetwork/vmbr0 --users ansible@pve --roles PVESDNUser
-
-# Proxmox HA (only with pve_ha_enabled: true). The HA API checks these on / and has no finer scope.
-pveum role add PGC-HA --privs "Sys.Audit,Sys.Console"
-pveum acl modify / --users ansible@pve --roles PGC-HA --propagate 0
+pveum user token add "$PVE_USER" "$PVE_TOKEN" --privsep 0
+#   prints the full token id and the secret ONCE: store the secret in your password manager now
 ```
-Replace `9000`, `RBD-Disk` and `vmbr0` with your values.
+If the token already exists, check how it was created. Run on: **Proxmox node**
+```bash
+pveum user token list "$PVE_USER"         # column privsep: 0 = token has the user's permissions, 1 = token has its own ACLs
+```
 
-`Sys.Console` on `/` is what the Proxmox API requires to create HA resources and rules (`Sys.Audit` to read them); it also allows console access to the nodes, so keep the token secret in the vault only. This permission set is a least-privilege starting point. This exact set hasn't been run end-to-end yet. If provisioning stops with `403 Permission check failed (<path>, <privilege>)`, grant that privilege on that path and re-run; nothing is half-created. Adding VMs to the pool may also need `Pool.Allocate` on `/pool/postgresql-pool`.
+**4.2 Permissions.** Run on: **Proxmox node** (as root). Replace `9000`, `RBD-Disk` and `vmbr0` with your values.
+```bash
+# Where to grant: the user (privsep 0). For a privsep 1 token, run every acl line twice:
+# once with --users "$PVE_USER" and once with --tokens "${PVE_USER}"'!'"${PVE_TOKEN}" (the token gets the intersection
+# of both; the '!' is single-quoted so bash doesn't treat it as history expansion).
+pveum acl modify /pool/postgresql-pool         --users "$PVE_USER" --roles PVEVMAdmin
+pveum acl modify /vms/9000                     --users "$PVE_USER" --roles PVETemplateUser
+pveum acl modify /storage/RBD-Disk             --users "$PVE_USER" --roles PVEDatastoreUser
+pveum acl modify /sdn/zones/localnetwork/vmbr0 --users "$PVE_USER" --roles PVESDNUser
+
+# Proxmox HA (only with pve_ha_enabled: true, the default). The HA API checks these on / and has no finer scope.
+pveum role add PGC-HA --privs "Sys.Audit,Sys.Console"     # "already exists": fine, go on
+pveum acl modify / --users "$PVE_USER" --roles PGC-HA --propagate 0
+```
+`Sys.Console` on `/` is what the Proxmox API requires to create HA resources and rules (`Sys.Audit` to read them); it also allows console access to the nodes, so keep the token secret in the vault only. Background in [docs/proxmox-ha.md](docs/proxmox-ha.md).
+
+Check the effective permissions. Run on: **Proxmox node**
+```bash
+pveum user token permissions "$PVE_USER" "$PVE_TOKEN" --path /       # expect Sys.Audit and Sys.Console (HA)
+pveum user token permissions "$PVE_USER" "$PVE_TOKEN" --path /pool/postgresql-pool
+```
+
+This permission set is a least-privilege starting point. This exact set hasn't been run end-to-end yet. If provisioning stops with `403 Permission check failed (<path>, <privilege>)`, grant that privilege on that path and re-run; nothing is half-created. Adding VMs to the pool may also need `Pool.Allocate` on `/pool/postgresql-pool`.
 
 Test the token. Run on: **workstation**
 ```bash
-curl -sk -H 'Authorization: PVEAPIToken=ansible@pve!ansible-auth=<SECRET>' \
+curl -sk -H 'Authorization: PVEAPIToken=<user>@<realm>!<token>=<SECRET>' \
   https://<pve_api_host>:8006/api2/json/version
 ```
 Expected: JSON containing `"version":"9.`. A `401` means the token id or secret is wrong.
@@ -688,6 +711,7 @@ ansible-playbook $INV $VAULT playbooks/site.yml --tags baseline,patroni,pgbounce
 | `Decryption failed` | Wrong vault password file for this env | Get the right one from the password manager |
 | Preflight: `... does not match pgc_environments.<env>` | `hosts.yml`, `host_vars` and `environments.yml` disagree | Make all three match |
 | Proxmox `401` | Token id or secret wrong | `make vault-edit ENV=<env>` |
+| `ACL update failed: user '...' does not exist` | The commands in section 4 were run with a user that doesn't exist (for example the example `ansible@pve` while your token belongs to another user) | Set `PVE_USER` to the user that owns your token (`pveum user list`) and re-run section 4.2 |
 | Proxmox `403 Permission check failed (<path>, <priv>)` | Missing privilege | Grant it on that path (section 4). On PVE 9, cloning needs `SDN.Use` on the bridge's zone. |
 | `Permission denied (publickey)` / `ssh_askpass` errors on the VMs | Key not in the agent, or a `Host *` block in `~/.ssh/config` forces another agent | `ssh-add`. Check `ssh -G ansible@<vm-ip> \| grep identityagent`; add a `Host <vm-ips>` block with `IdentityAgent SSH_AUTH_SOCK` above `Host *` |
 | `UNREACHABLE` on the VMs | No route from the workstation, or VMs still booting | `ip route get <vm-ip>`; wait for 7.2 to finish |

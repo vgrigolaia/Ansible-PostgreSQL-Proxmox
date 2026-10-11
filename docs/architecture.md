@@ -8,7 +8,7 @@
 | pg03 (pve03) | pgdb03-dev 10.50.200.233 (VM 233) | pgdb03-prod 10.50.200.237 (VM 237) |
 | VIP | 10.50.200.234 (VRID 231) | 10.50.200.238 (VRID 235) |
 
-Each environment is a fully separate cluster with its own etcd, Patroni scope, vault, etcd CA and keepalived VRID. VMs are cloned from template 9000 (`tpl-alma10`) onto Ceph RBD storage `RBD-Disk`, bridge `vmbr0`, Proxmox pool `postgresql-pool`. Patroni handles database failover. Proxmox HA (`pve_ha_enabled`) only restarts VMs: each VM has a non-strict node-affinity rule `pgc-<vm>-home` to its own node, so a VM of a failed node is restarted on another node and moves back (failback) when its node returns.
+Each environment is a fully separate cluster with its own etcd, Patroni scope, vault, etcd CA and keepalived VRID. VMs are cloned from template 9000 (`tpl-alma10`) onto Ceph RBD storage `RBD-Disk`, bridge `vmbr0`, Proxmox pool `postgresql-pool`. Patroni handles database failover. Proxmox HA (`pve_ha_enabled`) only restarts VMs: each VM has a non-strict node-affinity rule `pgc-<vm>-home` to its own node, so a VM of a failed node is restarted on another node and moves back (failback) when its node returns. Details: [proxmox-ha.md](proxmox-ha.md).
 
 | | dev | prod |
 |---|---|---|

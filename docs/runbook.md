@@ -181,7 +181,7 @@ It does a switchover, stops Patroni on the new leader (another node must take ov
 
 ## 14. Proxmox HA and Proxmox node maintenance
 
-Each DB VM is an HA resource (`vm:<id>`, requested state `started`) with a non-strict node-affinity rule `pgc-<vm>-home` to its own node. Patroni still does the database failover; Proxmox HA only (re)starts VMs.
+Each DB VM is an HA resource (`vm:<id>`, requested state `started`) with a non-strict node-affinity rule `pgc-<vm>-home` to its own node. Patroni still does the database failover; Proxmox HA only (re)starts VMs. Background, requirements and failure scenarios: [proxmox-ha.md](proxmox-ha.md).
 
 Show HA state. Run on: **any Proxmox node**
 ```bash

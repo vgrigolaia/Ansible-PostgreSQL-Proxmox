@@ -58,7 +58,7 @@ The template built by this project meets the storage requirement: the install IS
    ansible-playbook $INV $VAULT playbooks/provision.yml --tags vms --check --diff   # plan, incl. "ha: resource vm:<id> ..." per VM
    ansible-playbook $INV $VAULT playbooks/provision.yml --tags vms
    ```
-   In `--check` the task "HA resource" shows `skipped`: that Ansible module has no check mode. The plan line shows what it will do. Re-running is safe: existing resources and rules are updated in place, nothing is deleted.
+   Before changing anything, the play checks that Proxmox is 9 or newer and that the token has `Sys.Audit` and `Sys.Console` on `/`; otherwise it stops with the missing privilege named. In `--check` the task "HA resource" shows `skipped`: that Ansible module has no check mode. The plan line shows what it will do. Re-running is safe: existing resources and rules are updated in place, nothing is deleted.
 
 Existing VMs (provisioned before HA was enabled) are put under HA by the same command; they keep running.
 
@@ -103,7 +103,7 @@ ha-manager remove vm:231     # also deletes rule pgc-pgdb01-dev-home (it only re
 | Symptom | Cause | Fix |
 |---|---|---|
 | `Assert Proxmox VE 9 or newer for HA rules` fails | Cluster on PVE 8 | Upgrade, or `pve_ha_enabled: false` |
-| `403 Permission check failed (/, Sys.Console)` or `(/, Sys.Audit)` | HA privileges missing on the user or, for a privsep token, on the token | [DEPLOYMENT.md §4.2](../DEPLOYMENT.md#4-proxmox-preparation); check with `pveum user token permissions <user> <token> --path /` |
+| `Assert the token may manage Proxmox HA` fails, or `403 Permission check failed (/, Sys.Console)` / `(/, Sys.Audit)` | HA privileges missing on the user or, for a privsep token, on the token | [DEPLOYMENT.md §4.2](../DEPLOYMENT.md#4-proxmox-preparation); check with `pveum user token permissions <user> <token> --path /` |
 | `ACL update failed: user '...' does not exist` | Section 4 commands run with the example user `ansible@pve` | Set `PVE_USER` to the user that owns your token |
 | Clone or HA rule fails with an unknown node | Inventory node names differ from `pvecm nodes` | Section 4, step 1 |
 | `ha-manager status` shows a VM in `error` | Start failed on all allowed nodes | Find the cause in the task log on the node (`journalctl -u pve-ha-lrm`), then `ha-manager set vm:<id> --state disabled` and `--state started` |

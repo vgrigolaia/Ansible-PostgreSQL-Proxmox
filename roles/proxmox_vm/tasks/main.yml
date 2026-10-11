@@ -40,6 +40,32 @@
     quiet: true
   when: pve_ha_enabled | bool
 
+# Checked before any change, so a missing HA privilege can't leave a VM cloned but not started.
+- name: Read the token's own privileges on /
+  ansible.builtin.uri:
+    url: "https://{{ pve_api_host }}:8006/api2/json/access/permissions?path=/"
+    headers:
+      Authorization: "PVEAPIToken={{ pve_api_token_id }}={{ pve_api_token_secret }}"
+    validate_certs: "{{ pve_api_validate_certs }}"
+  register: proxmox_vm_pve_perms
+  check_mode: false    # read-only GET
+  no_log: true         # the request carries the token secret
+  when: pve_ha_enabled | bool
+
+# The API maps privilege => propagate flag; with --propagate 0 the value is 0 but the privilege is granted.
+- name: Assert the token may manage Proxmox HA (Sys.Audit + Sys.Console on /)
+  ansible.builtin.assert:
+    that:
+      - "'Sys.Audit' in proxmox_vm_pve_perms.json.data['/'] | default({})"
+      - "'Sys.Console' in proxmox_vm_pve_perms.json.data['/'] | default({})"
+    fail_msg: >-
+      Token {{ pve_api_token_id }} lacks Sys.Audit and/or Sys.Console on / (has:
+      {{ proxmox_vm_pve_perms.json.data['/'] | default({}) | list | sort | join(', ') or 'nothing' }}).
+      Grant role PGC-HA on / to the user, and also to the token if it has privsep 1 (DEPLOYMENT.md section 4.2),
+      or set pve_ha_enabled: false. Nothing was changed.
+    quiet: true
+  when: pve_ha_enabled | bool
+
 - name: Look up template {{ pve_template_vmid }}
   community.proxmox.proxmox_vm_info:
     vmid: "{{ pve_template_vmid }}"

@@ -320,13 +320,14 @@ Each environment has one encrypted vault file and one vault password file.
 Run on: **workstation**
 ```bash
 export ENV=dev
+PVE_TOKEN_ID='ansible@pve!ansible-auth'     # your full token id from section 4: <user>@<realm>!<token>
 mkdir -p ~/.ansible/vault && chmod 700 ~/.ansible/vault
 (umask 077; openssl rand -base64 32 > ~/.ansible/vault/pgc-$ENV)   # store this file in your password manager
 
 gen() { openssl rand -base64 64 | tr -dc 'A-Za-z0-9' | head -c "$1"; }
 tmp=$(mktemp ~/.ansible/vault/new-vault.XXXXXX)
 cat > "$tmp" <<EOF
-vault_pve_api_token_id: "ansible@pve!ansible-auth"
+vault_pve_api_token_id: "$PVE_TOKEN_ID"
 vault_pve_api_token_secret: "REPLACE-ME"
 vault_vm_ci_password: "$(gen 24)"
 vault_postgres_superuser_password: "$(gen 32)"

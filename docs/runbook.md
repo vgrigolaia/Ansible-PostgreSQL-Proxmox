@@ -5,8 +5,8 @@ Every block says where it runs. `<env>` is `dev` or `prod`, and `pgNN` is a node
 
 | | dev | prod |
 |---|---|---|
-| Nodes | pgdb01-dev..03 (10.50.200.231–233) | pgdb01-prod..03 (10.50.200.235–237) |
-| VIP | 10.50.200.234 | 10.50.200.238 |
+| Nodes | pgdb01-dev..03 (10.50.200.242–244) | pgdb01-prod..03 (10.50.200.246–248) |
+| VIP | 10.50.200.245 | 10.50.200.249 |
 | Patroni scope | pgc-dev | pgc-prod |
 
 Shortcut used below, on any node:
@@ -203,8 +203,8 @@ Maintenance mode survives a reboot of the node; it stays on until you disable it
 
 **Stop a DB VM on purpose.** HA keeps VMs running: a VM shut down from inside the guest is started again. Ask HA instead. Run on: **any Proxmox node**
 ```bash
-ha-manager set vm:232 --state stopped      # stop and keep stopped
-ha-manager set vm:232 --state started      # start again
+ha-manager set vm:243 --state stopped      # stop and keep stopped
+ha-manager set vm:243 --state started      # start again
 ```
 Re-running `provision.yml --tags vms` also sets every VM back to `started`.
 

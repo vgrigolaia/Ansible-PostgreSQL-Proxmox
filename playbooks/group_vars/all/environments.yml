@@ -6,20 +6,20 @@
 pgc_environments:
   dev:
     nodes:
-      pgdb01-dev: 10.50.200.231
-      pgdb02-dev: 10.50.200.232
-      pgdb03-dev: 10.50.200.233
-    vip: 10.50.200.234
-    keepalived_vrid: 231
-    vm_ids: [231, 232, 233]
+      pgdb01-dev: 10.50.200.242
+      pgdb02-dev: 10.50.200.243
+      pgdb03-dev: 10.50.200.244
+    vip: 10.50.200.245
+    keepalived_vrid: 242
+    vm_ids: [242, 243, 244]
   prod:
     nodes:
-      pgdb01-prod: 10.50.200.235
-      pgdb02-prod: 10.50.200.236
-      pgdb03-prod: 10.50.200.237
-    vip: 10.50.200.238
-    keepalived_vrid: 235
-    vm_ids: [235, 236, 237]
+      pgdb01-prod: 10.50.200.246
+      pgdb02-prod: 10.50.200.247
+      pgdb03-prod: 10.50.200.248
+    vip: 10.50.200.249
+    keepalived_vrid: 246
+    vm_ids: [246, 247, 248]
 
 pgc_env_node_ips: "{{ pgc_environments[pgc_env].nodes.values() | list }}"
 _pgc_foreign_envs: "{{ pgc_environments | dict2items | rejectattr('key', 'equalto', pgc_env) | map(attribute='value') | list }}"
@@ -29,6 +29,12 @@ pgc_foreign_ips: >-
      + (_pgc_foreign_envs | map(attribute='vip') | list) }}
 
 # Addresses that must never be assigned to a cluster node (preflight refuses them)
-pgc_reserved_ips: []
+pgc_reserved_ips:
+  # In use by other machines on 10.50.200.0/24 (found 2026-10-11): pve-demo01/02 and unknown hosts
+  - 10.50.200.231
+  - 10.50.200.232
+  - 10.50.200.234
+  - 10.50.200.236
+  - 10.50.200.238
 
 prometheus_server_ip: 10.45.66.120

@@ -6,17 +6,17 @@
 - job_name: pgc-dev-node
   metrics_path: /metrics
   static_configs:
-    - targets: ["10.50.200.231:9100"]
+    - targets: ["10.50.200.242:9100"]
       labels:
         env: dev
         cluster: pgc-dev
         node: pgdb01-dev
-    - targets: ["10.50.200.232:9100"]
+    - targets: ["10.50.200.243:9100"]
       labels:
         env: dev
         cluster: pgc-dev
         node: pgdb02-dev
-    - targets: ["10.50.200.233:9100"]
+    - targets: ["10.50.200.244:9100"]
       labels:
         env: dev
         cluster: pgc-dev
@@ -24,17 +24,17 @@
 - job_name: pgc-dev-postgres
   metrics_path: /metrics
   static_configs:
-    - targets: ["10.50.200.231:9187"]
+    - targets: ["10.50.200.242:9187"]
       labels:
         env: dev
         cluster: pgc-dev
         node: pgdb01-dev
-    - targets: ["10.50.200.232:9187"]
+    - targets: ["10.50.200.243:9187"]
       labels:
         env: dev
         cluster: pgc-dev
         node: pgdb02-dev
-    - targets: ["10.50.200.233:9187"]
+    - targets: ["10.50.200.244:9187"]
       labels:
         env: dev
         cluster: pgc-dev
@@ -42,17 +42,17 @@
 - job_name: pgc-dev-pgbouncer
   metrics_path: /metrics
   static_configs:
-    - targets: ["10.50.200.231:9127"]
+    - targets: ["10.50.200.242:9127"]
       labels:
         env: dev
         cluster: pgc-dev
         node: pgdb01-dev
-    - targets: ["10.50.200.232:9127"]
+    - targets: ["10.50.200.243:9127"]
       labels:
         env: dev
         cluster: pgc-dev
         node: pgdb02-dev
-    - targets: ["10.50.200.233:9127"]
+    - targets: ["10.50.200.244:9127"]
       labels:
         env: dev
         cluster: pgc-dev
@@ -60,17 +60,17 @@
 - job_name: pgc-dev-patroni
   metrics_path: /metrics
   static_configs:
-    - targets: ["10.50.200.231:8008"]
+    - targets: ["10.50.200.242:8008"]
       labels:
         env: dev
         cluster: pgc-dev
         node: pgdb01-dev
-    - targets: ["10.50.200.232:8008"]
+    - targets: ["10.50.200.243:8008"]
       labels:
         env: dev
         cluster: pgc-dev
         node: pgdb02-dev
-    - targets: ["10.50.200.233:8008"]
+    - targets: ["10.50.200.244:8008"]
       labels:
         env: dev
         cluster: pgc-dev
@@ -78,17 +78,17 @@
 - job_name: pgc-dev-haproxy
   metrics_path: /metrics
   static_configs:
-    - targets: ["10.50.200.231:8404"]
+    - targets: ["10.50.200.242:8404"]
       labels:
         env: dev
         cluster: pgc-dev
         node: pgdb01-dev
-    - targets: ["10.50.200.232:8404"]
+    - targets: ["10.50.200.243:8404"]
       labels:
         env: dev
         cluster: pgc-dev
         node: pgdb02-dev
-    - targets: ["10.50.200.233:8404"]
+    - targets: ["10.50.200.244:8404"]
       labels:
         env: dev
         cluster: pgc-dev
@@ -96,17 +96,17 @@
 - job_name: pgc-dev-etcd
   metrics_path: /metrics
   static_configs:
-    - targets: ["10.50.200.231:2381"]
+    - targets: ["10.50.200.242:2381"]
       labels:
         env: dev
         cluster: pgc-dev
         node: pgdb01-dev
-    - targets: ["10.50.200.232:2381"]
+    - targets: ["10.50.200.243:2381"]
       labels:
         env: dev
         cluster: pgc-dev
         node: pgdb02-dev
-    - targets: ["10.50.200.233:2381"]
+    - targets: ["10.50.200.244:2381"]
       labels:
         env: dev
         cluster: pgc-dev

@@ -246,10 +246,10 @@ The reference values in this repository. To adapt them to your own infrastructur
 
 | | dev | prod |
 |---|---|---|
-| node 1 | pgdb01-dev, 10.50.200.231, VM 231 on DC-A-PVE-11 | pgdb01-prod, 10.50.200.235, VM 235 on DC-A-PVE-11 |
-| node 2 | pgdb02-dev, 10.50.200.232, VM 232 on DC-A-PVE-12 | pgdb02-prod, 10.50.200.236, VM 236 on DC-A-PVE-12 |
-| node 3 | pgdb03-dev, 10.50.200.233, VM 233 on DC-A-PVE-13 | pgdb03-prod, 10.50.200.237, VM 237 on DC-A-PVE-13 |
-| VIP / VRRP ID | 10.50.200.234 / 231 | 10.50.200.238 / 235 |
+| node 1 | pgdb01-dev, 10.50.200.242, VM 242 on DC-A-PVE-11 | pgdb01-prod, 10.50.200.246, VM 246 on DC-A-PVE-11 |
+| node 2 | pgdb02-dev, 10.50.200.243, VM 243 on DC-A-PVE-12 | pgdb02-prod, 10.50.200.247, VM 247 on DC-A-PVE-12 |
+| node 3 | pgdb03-dev, 10.50.200.244, VM 244 on DC-A-PVE-13 | pgdb03-prod, 10.50.200.248, VM 248 on DC-A-PVE-13 |
+| VIP / VRRP ID | 10.50.200.245 / 242 | 10.50.200.249 / 246 |
 | Patroni scope | `pgc-dev` | `pgc-prod` |
 | VM size | 2 vCPU, 4 GB RAM | 2 vCPU, 4 GB RAM |
 | OS disk | 32 GB: root 16, var 8, home 2, swap 4 | same as dev |

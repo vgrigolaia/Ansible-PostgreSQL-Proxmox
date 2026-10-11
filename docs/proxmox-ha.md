@@ -24,9 +24,9 @@ For the reference setup:
 
 | VM | Home node | HA rule |
 |---|---|---|
-| pgdb01-dev (231) / pgdb01-prod (235) | DC-A-PVE-11 | pgc-pgdb01-dev-home / pgc-pgdb01-prod-home |
-| pgdb02-dev (232) / pgdb02-prod (236) | DC-A-PVE-12 | pgc-pgdb02-dev-home / pgc-pgdb02-prod-home |
-| pgdb03-dev (233) / pgdb03-prod (237) | DC-A-PVE-13 | pgc-pgdb03-dev-home / pgc-pgdb03-prod-home |
+| pgdb01-dev (242) / pgdb01-prod (246) | DC-A-PVE-11 | pgc-pgdb01-dev-home / pgc-pgdb01-prod-home |
+| pgdb02-dev (243) / pgdb02-prod (247) | DC-A-PVE-12 | pgc-pgdb02-dev-home / pgc-pgdb02-prod-home |
+| pgdb03-dev (244) / pgdb03-prod (248) | DC-A-PVE-13 | pgc-pgdb03-dev-home / pgc-pgdb03-prod-home |
 
 **Why non-strict node affinity and not "keep apart" (anti-affinity)?** A negative resource-affinity rule is always strict in Proxmox VE: if a node fails, its VM would not be restarted anywhere, because the other two nodes already run a VM of the same rule. Non-strict node affinity lets HA restart the VM on a surviving node and move it back when its home node returns. The price: while a node is down, two DB VMs of one environment share a Proxmox node (section 6).
 
@@ -66,7 +66,7 @@ Existing VMs (provisioned before HA was enabled) are put under HA by the same co
 
 Run on: **any Proxmox node**
 ```bash
-ha-manager status            # expect: "service vm:231 (DC-A-PVE-11, started)" and so on for each VM
+ha-manager status            # expect: "service vm:242 (DC-A-PVE-11, started)" and so on for each VM
 ha-manager rules config      # expect: one pgc-<vm>-home node-affinity rule per VM
 ```
 
@@ -95,7 +95,7 @@ Trade-offs to know:
 
 `pve_ha_enabled: false` only stops the playbook from creating HA objects; it never deletes anything. To take the VMs out of HA, run on: **any Proxmox node**, per VM
 ```bash
-ha-manager remove vm:231     # also deletes rule pgc-pgdb01-dev-home (it only references this VM); the VM keeps running
+ha-manager remove vm:242     # also deletes rule pgc-pgdb01-dev-home (it only references this VM); the VM keeps running
 ```
 
 ## 8. Troubleshooting

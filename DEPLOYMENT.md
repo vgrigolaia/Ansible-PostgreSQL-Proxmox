@@ -29,7 +29,7 @@ Architecture and conventions are in [README.md](README.md). Day-2 operations are
 - **Proxmox node**: a PVE node, as root;
 - **DB VM**: one of the environment's PostgreSQL VMs, as the cloud-init user (`ansible`). Use `sudo` where shown.
 
-**Example values.** Examples use environment `dev` and the reference values in this repository: Proxmox nodes `DC-A-PVE-11..13`, DB VMs `10.50.200.231–233`, VIP `10.50.200.234`. Replace them with your own values from section 3.
+**Example values.** Examples use environment `dev` and the reference values in this repository: Proxmox nodes `DC-A-PVE-11..13`, DB VMs `10.50.200.242–244`, VIP `10.50.200.245`. Replace them with your own values from section 3.
 
 **Check, then apply.** Every step that changes something is run twice:
 1. with `--check --diff`, to see what would change;
@@ -69,9 +69,9 @@ Plan per environment:
 
 | Item | Count | Reference (dev) |
 |---|---|---|
-| Node IPs, in one subnet | 3 | 10.50.200.231–233 |
-| VIP, in the same subnet, unused | 1 | 10.50.200.234 |
-| VRRP router ID, unique on that L2 segment (1–255) | 1 | 231 |
+| Node IPs, in one subnet | 3 | 10.50.200.242–244 |
+| VIP, in the same subnet, unused | 1 | 10.50.200.245 |
+| VRRP router ID, unique on that L2 segment (1–255) | 1 | 242 |
 | Gateway, DNS servers | | 10.50.200.1; 1.1.1.1 |
 
 Required network flows:
@@ -97,7 +97,7 @@ If the bridge is VLAN-tagged, set `net_vlan_tag` (section 3.6). If your switches
   - Debian / Ubuntu: `sudo apt install -y python3 python3-venv git make openssl curl`
 - A route to the DB subnet (direct, VPN or similar). Check it. Run on: **workstation**
   ```bash
-  ip route get 10.50.200.231          # must not leave through your internet default route
+  ip route get 10.50.200.242          # must not leave through your internet default route
   ```
 - An SSH key pair. Its public key goes into the VMs (section 3.7), and its private key must be usable without a prompt, from `ssh-agent` or `~/.ssh/id_ed25519`.
 
@@ -156,12 +156,12 @@ This registry is the single source of truth for addresses of **all** environment
 pgc_environments:
   dev:
     nodes:                                   # VM name: IP. Names must equal the inventory host names.
-      pgdb01-dev: 10.50.200.231
-      pgdb02-dev: 10.50.200.232
-      pgdb03-dev: 10.50.200.233
-    vip: 10.50.200.234
-    keepalived_vrid: 231                     # unique per env on the L2 segment
-    vm_ids: [231, 232, 233]                  # the only VM IDs provisioning may touch for this env
+      pgdb01-dev: 10.50.200.242
+      pgdb02-dev: 10.50.200.243
+      pgdb03-dev: 10.50.200.244
+    vip: 10.50.200.245
+    keepalived_vrid: 242                     # unique per env on the L2 segment
+    vm_ids: [242, 243, 244]                  # the only VM IDs provisioning may touch for this env
   prod:
     ...
 pgc_reserved_ips: []                     # IPs that must never be assigned
@@ -180,7 +180,7 @@ The group name `pgc_<env>` is free text.
 ### 3.4 Per VM: `inventories/<env>/host_vars/<vm-name>.yml`
 
 ```yaml
-vm_id: 231                 # must be in the registry's vm_ids for this env
+vm_id: 242                 # must be in the registry's vm_ids for this env
 vm_pve_node: DC-A-PVE-11     # Proxmox node that hosts this VM; the three VMs must be on three different nodes
 keepalived_priority: 100   # 100 / 90 / 80: highest gets the VIP first
 ```
@@ -560,7 +560,7 @@ ansible-playbook $INV $VAULT playbooks/site.yml --tags haproxy,keepalived
 ```
 Expected: `<VIP> is on <node>` (normally pg01, highest priority) and both VIP logins `ok`. Check it. Run on: **DB VM** (any)
 ```bash
-ip -br addr | grep 10.50.200.234                                  # present on exactly one node
+ip -br addr | grep 10.50.200.245                                  # present on exactly one node
 echo "show stat" | sudo socat stdio /var/lib/haproxy/stats | cut -d, -f1,2,18 | grep -vE 'FRONTEND|BACKEND'
 # primary: one node UP; replicas: two nodes UP
 ```
@@ -583,8 +583,8 @@ git add docs/prometheus/pgc-$ENV.yml && git commit -m "chore: add $ENV Prometheu
 Check it. Run on: **DB VM** (pg01)
 ```bash
 systemctl is-active node_exporter postgres_exporter pgbouncer_exporter   # 3 x active
-curl -s 10.50.200.231:9187/metrics | grep '^pg_up '                     # pg_up 1
-curl -s 10.50.200.231:9127/metrics | grep '^pgbouncer_up '              # pgbouncer_up 1
+curl -s 10.50.200.242:9187/metrics | grep '^pg_up '                     # pg_up 1
+curl -s 10.50.200.242:9127/metrics | grep '^pgbouncer_up '              # pgbouncer_up 1
 ```
 
 ### 7.10 Prometheus (optional)
@@ -593,7 +593,7 @@ On your Prometheus server, add the jobs from `docs/prometheus/pgc-<env>.yml` und
 
 Check reachability. Run on: **the Prometheus server**
 ```bash
-for p in 9100 9187 9127 8008 8404 2381; do echo -n "$p "; curl -s -o /dev/null -w "%{http_code}\n" http://10.50.200.231:$p/metrics; done
+for p in 9100 9187 9127 8008 8404 2381; do echo -n "$p "; curl -s -o /dev/null -w "%{http_code}\n" http://10.50.200.242:$p/metrics; done
 # expect 200 for every port
 ```
 
@@ -733,11 +733,11 @@ ansible-playbook $INV $VAULT playbooks/site.yml --tags baseline,patroni,pgbounce
 
 The project never deletes anything in Proxmox. Removing an environment is a manual, irreversible operation. Do it only when you mean to destroy its data.
 
-Run on: **Proxmox node**, as root, for each of the environment's VM IDs (dev: 231, 232, 233)
+Run on: **Proxmox node**, as root, for each of the environment's VM IDs (dev: 242, 243, 244)
 ```bash
-qm config 231 | grep -E '^(name|tags)'      # confirm it's the right VM before destroying it
-ha-manager remove vm:231                    # if HA-managed: also removes rule pgc-<vm>-home (it only references this VM)
-qm stop 231
-qm destroy 231 --purge                      # deletes the VM and its disks; --purge also drops it from pool and job configs
+qm config 242 | grep -E '^(name|tags)'      # confirm it's the right VM before destroying it
+ha-manager remove vm:242                    # if HA-managed: also removes rule pgc-<vm>-home (it only references this VM)
+qm stop 242
+qm destroy 242 --purge                      # deletes the VM and its disks; --purge also drops it from pool and job configs
 ```
 Then, on the **workstation**, remove the VMs' old host keys (`ssh-keygen -R <vm-ip>`). To redeploy, start again at section 7.2. The template and the CA can be reused.

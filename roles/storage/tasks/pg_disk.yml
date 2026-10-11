@@ -1,14 +1,29 @@
 ---
-# The disk is found by its Proxmox serial (scsiN -> /dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_<serial>), not by sdX order.
+# The disk is found by its Proxmox serial (scsiN,serial=<name>), not by sdX order. The serial is read with lsblk:
+# the /dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_* link name depends on the udev version (on EL10 it carries
+# drive-scsiN, not the serial). LVM tracks the PV by UUID, so the sdX path is only used to find it each run.
+- name: List disks with their serials - {{ storage_disk.name }}
+  ansible.builtin.command: lsblk --nodeps --noheadings --paths --output NAME,SERIAL
+  register: storage_lsblk
+  changed_when: false
+  check_mode: false
+
 - name: Set device paths - {{ storage_disk.name }}
   ansible.builtin.set_fact:
-    storage_dev: "/dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_{{ storage_disk.name }}"
+    storage_dev_matches: >-
+      {{ storage_lsblk.stdout_lines | map('trim') | select('match', '^[^ ]+ +' ~ storage_disk.name ~ '$')
+         | map('regex_replace', ' .*$', '') | list }}
     storage_lv_dev: "/dev/{{ storage_disk.vg }}/{{ storage_disk.lv }}"
+
+- name: Pick the disk with serial {{ storage_disk.name }}
+  ansible.builtin.set_fact:
+    storage_dev: "{{ storage_dev_matches | first | default('') }}"
 
 - name: Look for the disk by serial - {{ storage_disk.name }}
   ansible.builtin.stat:
     path: "{{ storage_dev }}"
   register: storage_dev_stat
+  when: storage_dev_matches | length == 1
 
 - name: Probe existing signatures - {{ storage_disk.name }}
   ansible.builtin.command: blkid -p -o value -s TYPE {{ storage_dev }}
@@ -16,23 +31,25 @@
   changed_when: false
   failed_when: storage_dev_type.rc not in [0, 2]
   check_mode: false
-  when: storage_dev_stat.stat.exists
+  when: storage_dev_stat.stat.exists | default(false)
 
 - name: Read VG of an existing PV - {{ storage_disk.name }}
   ansible.builtin.command: pvs --noheadings -o vg_name {{ storage_dev }}
   register: storage_dev_vg
   changed_when: false
   check_mode: false
-  when: storage_dev_stat.stat.exists and storage_dev_type.stdout | trim == 'LVM2_member'
+  when: storage_dev_stat.stat.exists | default(false) and storage_dev_type.stdout | trim == 'LVM2_member'
 
 - name: Guard - disk is empty or already ours - {{ storage_disk.name }}
   ansible.builtin.assert:
     that:
-      - storage_dev_stat.stat.exists
+      - storage_dev_matches | length == 1
+      - storage_dev_stat.stat.exists | default(false)
       - (storage_dev_type.stdout | trim) in ['', 'LVM2_member']
       - (storage_dev_type.stdout | trim) != 'LVM2_member' or (storage_dev_vg.stdout | trim) == storage_disk.vg
     fail_msg: >-
-      {{ storage_dev }} is missing, or carries '{{ storage_dev_type.stdout | default('') | trim }}'
+      Disk with serial {{ storage_disk.name }} ({{ storage_dev_matches | join(', ') or 'not found' }}) is missing,
+      not unique, or carries '{{ storage_dev_type.stdout | default('') | trim }}'
       {{ ('(VG ' ~ (storage_dev_vg.stdout | default('') | trim) ~ ')') if storage_dev_vg is not skipped else '' }}
       instead of being empty or VG {{ storage_disk.vg }}. Refusing to touch it.
     quiet: true

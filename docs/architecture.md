@@ -59,7 +59,7 @@ Each VM also has three dedicated PostgreSQL disks (SCSI on `RBD-Disk`). Each Pos
 | scsi2 (sdc) | vg_pgwal / lv_pgwal | `/pgwal` | WAL `/pgwal/18/pg_wal` (initdb and pg_basebackup `--waldir`) | 10G |
 | scsi3 (sdd) | vg_pgaudit / lv_pgaudit | `/pg_audit_logs` | PostgreSQL server log incl. pgaudit entries (`log_directory`) | 10G |
 
-Disks are identified in the guest by their Proxmox `serial` (`/dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_pgdata` etc.), never by device order.
+Disks are identified in the guest by their Proxmox `serial` (`lsblk -o NAME,SERIAL`), never by device order. The `/dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_*` link names are not used: on AlmaLinux 10 (udev 257) they carry `drive-scsiN`, not the serial.
 
 
 ## Isolation (dev ↔ prod)

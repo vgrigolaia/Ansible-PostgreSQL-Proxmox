@@ -105,7 +105,7 @@ All disks are SCSI on one VirtIO SCSI single controller (`scsihw: virtio-scsi-si
 | scsi2 (sdc) | `vg_pgwal` / `lv_pgwal` | `/pgwal` | WAL `/pgwal/18/pg_wal` (symlinked from PGDATA) |
 | scsi3 (sdd) | `vg_pgaudit` / `lv_pgaudit` | `/pg_audit_logs` | PostgreSQL server log incl. pgaudit |
 
-The PostgreSQL disks are found in the guest by their Proxmox serial (`/dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_pgdata` etc.), never by device order. Replicas are cloned with `pg_basebackup --waldir`, so WAL sits on the WAL disk on every node.
+The PostgreSQL disks are found in the guest by their Proxmox serial (`pgdata`, `pgwal`, `pgaudit`, shown by `lsblk -o NAME,SERIAL`), never by device order: on a real VM `pgdata` came up as `sdd`. Replicas are cloned with `pg_basebackup --waldir`, so WAL sits on the WAL disk on every node.
 
 ---
 

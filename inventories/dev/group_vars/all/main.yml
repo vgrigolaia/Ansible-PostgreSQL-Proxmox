@@ -19,7 +19,7 @@ vm_os_lvm:
   - { lv: swap, size_gb: 4, mount: swap }
 
 # Dedicated PostgreSQL disks (SCSI on RBD-Disk). Each disk: one PV -> VG -> single LV (100%FREE) -> xfs.
-# Found in the guest by their Proxmox serial (/dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_<serial>), not by sdX order.
+# Found in the guest by their Proxmox serial (lsblk SERIAL column = name), not by sdX order.
 vm_pg_disks:
   - name: pgdata
     slot: scsi1

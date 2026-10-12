@@ -20,6 +20,33 @@ Architecture and conventions are in [README.md](README.md). Day-2 operations are
 12. [Troubleshooting](#12-troubleshooting)
 13. [Removing an environment](#13-removing-an-environment)
 
+**Quick path.** The whole deployment of one environment as a command sequence, for when the prerequisites (section 1), configuration (section 3) and Proxmox preparation (section 4) are done. Every command is the same for dev and prod: only the first line differs. Run each step's `--check --diff` line, read the output, then run it again without those flags. Details and expected output are in the section named at the end of each line.
+
+Run on: **workstation**, in the repository root
+```bash
+export ENV=dev                                   # or: export ENV=prod
+git checkout $ENV && git pull --ff-only          # deploy dev from branch dev, prod from branch prod
+source .venv/bin/activate                        # after `make deps` (section 2)
+export INV="-i inventories/$ENV" VAULT="--vault-id $ENV@$HOME/.ansible/vault/pgc-$ENV"
+
+# once per environment: vault with generated secrets                                     (section 5)
+# then the offline checks                                                                (section 6)
+make lint && make syntax ENV=$ENV && ansible-playbook $INV $VAULT playbooks/preflight.yml
+
+ansible-playbook $INV $VAULT playbooks/provision.yml --tags template --check --diff  # once per Proxmox cluster (7.1)
+ansible-playbook $INV $VAULT playbooks/provision.yml --tags vms      --check --diff  # VMs + HA (7.2)
+ansible $INV $VAULT pg_nodes -m ansible.builtin.ping                                 # 3 x pong
+ansible-playbook $INV $VAULT playbooks/site.yml --tags baseline      --check --diff  # OS, disks, firewall (7.3)
+ansible-playbook $INV $VAULT playbooks/pki.yml                                       # once per environment (7.4)
+ansible-playbook $INV $VAULT playbooks/site.yml --tags etcd          --check --diff  # (7.5)
+ansible-playbook $INV $VAULT playbooks/site.yml --tags patroni       --check --diff  # (7.6)
+ansible-playbook $INV $VAULT playbooks/site.yml --tags pgbouncer     --check --diff  # (7.7)
+ansible-playbook $INV $VAULT playbooks/site.yml --tags haproxy,keepalived --check --diff   # (7.8)
+ansible-playbook $INV $VAULT playbooks/site.yml --tags pgbouncer,monitoring --check --diff # (7.9)
+ansible-playbook $INV $VAULT playbooks/validate.yml                                  # all checks passed (7.11)
+make credentials ENV=$ENV                                                            # endpoints and passwords (9)
+```
+
 ---
 
 ## 0. How to read this guide
@@ -29,7 +56,17 @@ Architecture and conventions are in [README.md](README.md). Day-2 operations are
 - **Proxmox node**: a PVE node, as root;
 - **DB VM**: one of the environment's PostgreSQL VMs, as the cloud-init user (`ansible`). Use `sudo` where shown.
 
-**Example values.** Examples use environment `dev` and the reference values in this repository: Proxmox nodes `DC-A-PVE-11..13`, DB VMs `10.50.200.242–244`, VIP `10.50.200.245`. Replace them with your own values from section 3.
+**Example values.** The guide is the same for both environments: set `ENV=dev` or `ENV=prod` (section 6) and the commands follow. Where a command needs an address, it shows the dev value with the prod value next to it. Reference values in this repository (replace them with your own, section 3):
+
+| | dev | prod |
+|---|---|---|
+| Branch to deploy from | `dev` | `prod` |
+| pg01 / pg02 / pg03 (VM name, IP = VM ID) | pgdb01-dev .242, pgdb02-dev .243, pgdb03-dev .244 | pgdb01-prod .246, pgdb02-prod .247, pgdb03-prod .248 |
+| VIP / VRRP ID | 10.50.200.245 / 242 | 10.50.200.249 / 246 |
+| Patroni scope | `pgc-dev` | `pgc-prod` |
+| Proxmox node per VM | pg01 → DC-A-PVE-11, pg02 → DC-A-PVE-12, pg03 → DC-A-PVE-13 | same |
+
+All addresses are in 10.50.200.0/24. "pg01" means pgdb01-dev or pgdb01-prod, depending on `ENV`.
 
 **Check, then apply.** Every step that changes something is run twice:
 1. with `--check --diff`, to see what would change;
@@ -67,16 +104,17 @@ While a node is down, two DB VMs of the same environment share one Proxmox node.
 
 Plan per environment:
 
-| Item | Count | Reference (dev) |
-|---|---|---|
-| Node IPs, in one subnet | 3 | 10.50.200.242–244 |
-| VIP, in the same subnet, unused | 1 | 10.50.200.245 |
-| VRRP router ID, unique on that L2 segment (1–255) | 1 | 242 |
-| Gateway, DNS servers | | 10.50.200.1; 1.1.1.1 |
+| Item | Count | dev | prod |
+|---|---|---|---|
+| Node IPs, in one subnet | 3 | 10.50.200.242–244 | 10.50.200.246–248 |
+| VIP, in the same subnet, unused | 1 | 10.50.200.245 | 10.50.200.249 |
+| VRRP router ID, unique on that L2 segment (1–255) | 1 | 242 | 246 |
+| Gateway, DNS servers | | 10.50.200.1; 1.1.1.1 | same |
 
 **The addresses must be unused**, including by machines outside your Proxmox cluster. A VM whose IP is already taken comes up without an address, and SSH silently reaches the other machine instead. Check every node IP and the VIP of each environment. Run on: **any Proxmox node** (on the DB subnet)
 ```bash
-for ip in 10.50.200.242 10.50.200.243 10.50.200.244 10.50.200.245; do
+IPS='10.50.200.242 10.50.200.243 10.50.200.244 10.50.200.245'     # prod: '10.50.200.246 10.50.200.247 10.50.200.248 10.50.200.249'
+for ip in $IPS; do
   ping -c1 -W1 $ip >/dev/null 2>&1; m=$(ip neigh show $ip | grep -v FAILED | awk '{print $5}')
   [ -n "$m" ] && echo "$ip IN USE ($m)" || echo "$ip free"
 done
@@ -106,7 +144,7 @@ If the bridge is VLAN-tagged, set `net_vlan_tag` (section 3.6). If your switches
   - Debian / Ubuntu: `sudo apt install -y python3 python3-venv git make openssl curl`
 - A route to the DB subnet (direct, VPN or similar). Check it. Run on: **workstation**
   ```bash
-  ip route get 10.50.200.242          # must not leave through your internet default route
+  ip route get 10.50.200.242          # prod: 10.50.200.246; must not leave through your internet default route
   ```
 - An SSH key pair. Its public key goes into the VMs (section 3.7). Ansible can't answer a passphrase prompt, so the private key must be usable **without a prompt** for the VM addresses: unencrypted, or loaded in the agent that SSH uses for those addresses. If `~/.ssh/config` has a `Host *` block with another `IdentityAgent` (for example a password manager's agent that doesn't hold this key), add a block for the DB subnet **above** it. Run on: **workstation**
   ```
@@ -114,7 +152,7 @@ If the bridge is VLAN-tagged, set `net_vlan_tag` (section 3.6). If your switches
       IdentityAgent SSH_AUTH_SOCK
   ```
   ```bash
-  ssh -G ansible@10.50.200.242 | grep identityagent     # the agent SSH will use for the VMs
+  ssh -G ansible@10.50.200.242 | grep identityagent     # prod: .246; the agent SSH will use for the VMs
   ssh-add -l                                            # that agent must list your key
   ```
 
@@ -180,7 +218,13 @@ pgc_environments:
     keepalived_vrid: 242                     # unique per env on the L2 segment
     vm_ids: [242, 243, 244]                  # the only VM IDs provisioning may touch for this env
   prod:
-    ...
+    nodes:
+      pgdb01-prod: 10.50.200.246
+      pgdb02-prod: 10.50.200.247
+      pgdb03-prod: 10.50.200.248
+    vip: 10.50.200.249
+    keepalived_vrid: 246
+    vm_ids: [246, 247, 248]
 pgc_reserved_ips:                        # IPs that must never be assigned, e.g. ones other machines use
   - 10.50.200.231
 prometheus_server_ip: 10.45.66.120                     # only this IP may scrape metrics
@@ -198,7 +242,7 @@ The group name `pgc_<env>` is free text.
 ### 3.4 Per VM: `inventories/<env>/host_vars/<vm-name>.yml`
 
 ```yaml
-vm_id: 242                 # must be in the registry's vm_ids for this env
+vm_id: 242                 # must be in the registry's vm_ids for this env (pgdb01-prod: 246)
 vm_pve_node: DC-A-PVE-11     # Proxmox node that hosts this VM; the three VMs must be on three different nodes
 keepalived_priority: 100   # 100 / 90 / 80: highest gets the VIP first
 ```
@@ -207,7 +251,7 @@ keepalived_priority: 100   # 100 / 90 / 80: highest gets the VIP first
 
 ### 3.5 Sizing: `inventories/<env>/group_vars/all/main.yml`
 
-| Variable | Reference (dev) | Rules |
+| Variable | Reference (dev; prod where different) | Rules |
 |---|---|---|
 | `pgc_env` | `dev` | Key in the registry |
 | `vm_cores`, `vm_memory_mb` | 2, 4096 | RAM also sets `shared_buffers` (25 %) and `effective_cache_size` (75 %) |
@@ -221,7 +265,7 @@ Provisioning refuses to run while any of these is empty.
 
 ### 3.6 Network: `inventories/<env>/group_vars/all/network.yml`
 
-| Variable | Reference (dev) | Notes |
+| Variable | Reference (dev and prod) | Notes |
 |---|---|---|
 | `net_prefix` | 24 | |
 | `net_gateway` | 10.50.200.1 | |
@@ -350,7 +394,7 @@ Each environment has one encrypted vault file and one vault password file.
 
 Run on: **workstation**
 ```bash
-export ENV=dev
+export ENV=dev                               # or prod
 PVE_TOKEN_ID='ansible@pve!ansible-auth'     # your full token id from section 4: <user>@<realm>!<token>
 mkdir -p ~/.ansible/vault && chmod 700 ~/.ansible/vault
 (umask 077; openssl rand -base64 32 > ~/.ansible/vault/pgc-$ENV)   # store this file in your password manager
@@ -405,7 +449,7 @@ git check-ignore inventories/$ENV/group_vars/all/vault.yml     # prints the path
 Set these once per shell. Every later command uses them. Run on: **workstation**, in the repository root
 ```bash
 source .venv/bin/activate
-export ENV=dev
+export ENV=dev                       # or prod; deploy prod from the prod branch (section 10)
 export INV="-i inventories/$ENV"
 export VAULT="--vault-id $ENV@$HOME/.ansible/vault/pgc-$ENV"
 ssh-add ~/.ssh/id_ed25519            # once per shell if your key has a passphrase (into the agent SSH uses for the VMs, section 1.3)
@@ -497,7 +541,7 @@ Run on: **workstation**
 ansible-playbook $INV $VAULT playbooks/site.yml --tags baseline --check --diff
 ansible-playbook $INV $VAULT playbooks/site.yml --tags baseline
 ```
-Check it. Run on: **DB VM** (pg01)
+Check it. Run on: **DB VM** (any)
 ```bash
 df -hT | grep -E 'pgsql|pgwal|pg_audit'     # three xfs mounts
 getenforce                                  # Enforcing
@@ -597,7 +641,7 @@ ansible-playbook $INV $VAULT playbooks/site.yml --tags haproxy,keepalived
 ```
 Expected: `<VIP> is on <node>` (normally pg01, highest priority) and both VIP logins `ok`. Check it. Run on: **DB VM** (any)
 ```bash
-ip -br addr | grep 10.50.200.245                                  # present on exactly one node
+ip -br addr | grep -E '10\.50\.200\.(245|249)'                     # VIP (dev .245, prod .249): on exactly one node
 echo "show stat" | sudo socat stdio /var/lib/haproxy/stats | cut -d, -f1,2,18 | grep -vE 'FRONTEND|BACKEND'
 # primary: one node UP; replicas: two nodes UP
 ```
@@ -617,11 +661,11 @@ ansible-playbook $INV $VAULT playbooks/site.yml --tags pgbouncer,monitoring --ch
 ansible-playbook $INV $VAULT playbooks/site.yml --tags pgbouncer,monitoring
 git add docs/prometheus/pgc-$ENV.yml && git commit -m "chore: add $ENV Prometheus scrape config"
 ```
-Check it. Run on: **DB VM** (pg01)
+Check it. Run on: **DB VM** (any; the commands use the node's own IP)
 ```bash
 systemctl is-active node_exporter postgres_exporter pgbouncer_exporter   # 3 x active
-curl -s 10.50.200.242:9187/metrics | grep '^pg_up '                     # pg_up 1
-curl -s 10.50.200.242:9127/metrics | grep '^pgbouncer_up '              # pgbouncer_up 1
+curl -s $(hostname -I | awk '{print $1}'):9187/metrics | grep '^pg_up '          # pg_up 1
+curl -s $(hostname -I | awk '{print $1}'):9127/metrics | grep '^pgbouncer_up '   # pgbouncer_up 1
 ```
 
 ### 7.10 Prometheus (optional)
@@ -630,7 +674,7 @@ On your Prometheus server, add the jobs from `docs/prometheus/pgc-<env>.yml` und
 
 Check reachability. Run on: **the Prometheus server**
 ```bash
-for p in 9100 9187 9127 8008 8404 2381; do echo -n "$p "; curl -s -o /dev/null -w "%{http_code}\n" http://10.50.200.242:$p/metrics; done
+for p in 9100 9187 9127 8008 8404 2381; do echo -n "$p "; curl -s -o /dev/null -w "%{http_code}\n" http://10.50.200.242:$p/metrics; done   # prod: .246
 # expect 200 for every port
 ```
 
@@ -709,7 +753,7 @@ ansible-playbook $INV $VAULT playbooks/site.yml --tags baseline,pgbouncer
 
 The steps are the same, with `ENV=prod`. What differs:
 
-1. **Configuration (section 3):** `inventories/prod/` with its own sizes, IPs, VM IDs and VRRP ID, all entered in the registry.
+1. **Configuration (section 3):** `inventories/prod/` with its own sizes, IPs, VM IDs and VRRP ID, all entered in the registry. Reference: pgdb01–03-prod on 10.50.200.246–248 (VM IDs 246–248, on DC-A-PVE-11/12/13), VIP 10.50.200.249, VRRP ID 246, Patroni scope `pgc-prod`, synchronous replication and `required` watchdog. Check that .246–.249 are free first (section 1.2).
 2. **API token:** a separate one (section 4), e.g. `ansible@pve!ansible-auth`, or the same token if your policy allows.
 3. **Vault:** its own vault password file and its own generated secrets (section 5). Never copy dev's.
 4. **CA:** its own etcd CA (section 7.4).
@@ -778,7 +822,7 @@ The project never deletes anything in Proxmox. Removing an environment is a manu
 
 Why by hand: a playbook that deletes is one wrong `-i inventories/...` away from wiping the other environment, and the guards only know the VM IDs in the current registry.
 
-Run on: **the Proxmox node that runs the VM** (`ha-manager status` shows it), as root, for each of the environment's VM IDs (dev: 242, 243, 244)
+Run on: **the Proxmox node that runs the VM** (`ha-manager status` shows it), as root, for each of the environment's VM IDs (dev: 242, 243, 244; prod: 246, 247, 248)
 ```bash
 qm config 242 | grep -E '^(name|tags)'      # confirm it's the right VM before destroying it
 ha-manager remove vm:242                    # if HA-managed: also removes rule pgc-<vm>-home (it only references this VM)

@@ -6,7 +6,7 @@ Ansible project that builds highly available PostgreSQL clusters on Proxmox VE: 
 AlmaLinux 10 · PostgreSQL 18 · Patroni · etcd · pgbouncer · HAProxy · keepalived · Prometheus exporters
 ```
 
-- **To deploy:** follow [DEPLOYMENT.md](DEPLOYMENT.md) from top to bottom.
+- **To deploy:** follow [DEPLOYMENT-dev.md](DEPLOYMENT-dev.md) or [DEPLOYMENT-prod.md](DEPLOYMENT-prod.md) from top to bottom. Each is filled in for its environment.
 - **To operate a running cluster:** [docs/runbook.md](docs/runbook.md) (switchover, failover, rebuilds, users, logs).
 - **Proxmox HA for the VMs:** [docs/proxmox-ha.md](docs/proxmox-ha.md) (requirements, setup, failure behaviour).
 
@@ -129,7 +129,7 @@ Versions are pinned in `playbooks/group_vars/all/versions.yml` and in each expor
 
 **Automation:**
 - **Tooling:** ansible-core 2.20, Python 3.12+, and the collections `community.proxmox` 2.x, `community.general` 13.x, `community.postgresql` 5.x, `community.crypto` 3.x and `ansible.posix` 2.x. `make deps` installs all of them into the repo (`.venv`, `./collections`).
-- **Proxmox:** VE 9.x (HA rules need 9.0+). The VM template is built over SSH with `qm` (root SSH to one node). The VMs and their HA resources and rules are created through the Proxmox API with a token; [DEPLOYMENT.md §4](DEPLOYMENT.md#4-proxmox-preparation) lists its privileges.
+- **Proxmox:** VE 9.x (HA rules need 9.0+). The VM template is built over SSH with `qm` (root SSH to one node). The VMs and their HA resources and rules are created through the Proxmox API with a token; section 4 of the deployment guide lists its privileges.
 
 ---
 
@@ -166,14 +166,14 @@ Versions are pinned in `playbooks/group_vars/all/versions.yml` and in each expor
 
 ## 5. Prerequisites (summary)
 
-The full checklist, with commands to verify each item, is in [DEPLOYMENT.md §1](DEPLOYMENT.md#1-prerequisites).
+The full checklist, with commands to verify each item, is in section 1 of [DEPLOYMENT-dev.md](DEPLOYMENT-dev.md#1-prerequisites) / [DEPLOYMENT-prod.md](DEPLOYMENT-prod.md#1-prerequisites).
 
 - **Proxmox:**
   - a VE 9.x cluster with at least 3 nodes, whose CPUs support x86-64-v3 (AVX2);
   - shared VM storage, e.g. Ceph RBD, so clones can be placed on any node;
   - ISO storage reachable from the template node, e.g. CephFS;
   - a Linux bridge onto the DB subnet;
-  - an API token with the privileges in DEPLOYMENT.md §4, including the HA ones, plus root SSH to one node (only for building the template).
+  - an API token with the privileges in section 4 of the deployment guide, including the HA ones, plus root SSH to one node (only for building the template).
 - **Network, per environment:**
   - 3 node IPs and 1 VIP in one subnet, **verifiably unused** (provisioning refuses addresses another machine answers on);
   - a free VRRP router ID;
@@ -182,7 +182,7 @@ The full checklist, with commands to verify each item, is in [DEPLOYMENT.md §1]
 - **Workstation:**
   - Linux with Python 3.12+, `git`, `make`, `openssl`;
   - a route to the DB subnet;
-  - an SSH key pair that SSH can use without a prompt for the VM addresses (an agent; check `ssh -G`, DEPLOYMENT.md §1.3);
+  - an SSH key pair that SSH can use without a prompt for the VM addresses (an agent; check `ssh -G`, deployment guide section 1.3);
   - outbound HTTPS to GitHub, Ansible Galaxy and PyPI.
 - **Optional:** a Prometheus server to scrape the exporters.
 
@@ -195,7 +195,8 @@ ansible.cfg                     # no default inventory (every run names its env)
 Makefile                        # deps, lint, vault-check, vault-edit, inventory, syntax, credentials
 requirements.txt                # Python packages for the workstation venv
 requirements.yml                # Ansible collections (installed into ./collections)
-DEPLOYMENT.md                   # step-by-step deployment guide
+DEPLOYMENT.md                   # index: which guide to use, how they are generated
+DEPLOYMENT-<env>.md             # step-by-step deployment guide per environment (generated: make docs)
 .github/workflows/lint.yml      # CI: yamllint, ansible-lint, syntax check (never deploys)
 inventories/
   <env>/                        # dev, prod
@@ -229,6 +230,8 @@ docs/
   proxmox-ha.md                 # Proxmox HA for the DB VMs: requirements, setup, failure behaviour
   autobase-notes.md             # what was taken from autobase and what differs
   prometheus/<cluster>.yml      # generated Prometheus scrape config per env
+  templates/DEPLOYMENT.md.j2    # source of DEPLOYMENT-<env>.md
+scripts/render_deployment.py    # renders the deployment guides (make docs / make docs-check)
 ```
 
 | Tag in `site.yml` | Roles |
@@ -244,7 +247,7 @@ docs/
 
 ## 7. Environments
 
-The reference values in this repository. To adapt them to your own infrastructure, see [DEPLOYMENT.md §3](DEPLOYMENT.md#3-configure-for-your-infrastructure).
+The reference values in this repository. To adapt them to your own infrastructure, see section 3 of the deployment guides ([DEPLOYMENT.md](DEPLOYMENT.md)), then run `make docs`.
 
 | | dev | prod |
 |---|---|---|
@@ -313,7 +316,7 @@ Before the first change, `provision.yml --tags vms` also checks:
 - every VM ID, name and disk layout, for all three VMs, before any VM is changed;
 - no other machine answers on a new VM's IP, or on the VIP of a new environment.
 
-Any conflict stops the play with nothing changed. Removing VMs is always a manual step (DEPLOYMENT.md §13).
+Any conflict stops the play with nothing changed. Removing VMs is always a manual step (deployment guide section 13).
 
 **Code**
 - One role per component. Role variables are prefixed with the role name.
@@ -333,7 +336,7 @@ Any conflict stops the play with nothing changed. Removing VMs is always a manua
 
 | Document | For |
 |---|---|
-| [DEPLOYMENT.md](DEPLOYMENT.md) | Building an environment from scratch, step by step |
+| [DEPLOYMENT-dev.md](DEPLOYMENT-dev.md), [DEPLOYMENT-prod.md](DEPLOYMENT-prod.md) | Building an environment from scratch, step by step, with that environment's values ([index](DEPLOYMENT.md)) |
 | [docs/runbook.md](docs/runbook.md) | Operating a running cluster |
 | [docs/architecture.md](docs/architecture.md) | Architecture reference (ports, disks, isolation) |
 | [docs/proxmox-ha.md](docs/proxmox-ha.md) | Proxmox HA for the DB VMs: requirements, setup, failure behaviour |

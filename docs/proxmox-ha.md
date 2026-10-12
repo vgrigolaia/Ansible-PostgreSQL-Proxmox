@@ -39,14 +39,14 @@ For the reference setup:
 | **All VM disks on shared storage** | A VM can only start on another node if every disk is reachable there | `qm config <vmid>` (Proxmox node): every disk, including the cloud-init drive, on `RBD-Disk`; no local ISO attached |
 | Inventory node names = Proxmox node names | `vm_pve_node` and `pve_template_node` go straight into the API and into the HA rules | `pvecm nodes` (Proxmox node): use the names in the `Name` column, exactly (case-sensitive) |
 | Fencing | A failed node must be reset before its VMs start elsewhere | Nothing to do: Proxmox uses the `softdog` watchdog by default. A hardware watchdog is optional |
-| API token privileges | Create/read HA resources and rules | `Sys.Console` + `Sys.Audit` on `/`, see [DEPLOYMENT.md §4](../DEPLOYMENT.md#4-proxmox-preparation) |
+| API token privileges | Create/read HA resources and rules | `Sys.Console` + `Sys.Audit` on `/`, see [deployment guide §4](../DEPLOYMENT.md) |
 
 The template built by this project meets the storage requirement: the install ISOs are detached and the cloud-init drive is created on `pve_storage`.
 
 ## 4. Setup
 
 1. **Node names.** Run `pvecm nodes` on any Proxmox node and use those names for the hosts in `pve_nodes` (`inventories/<env>/hosts.yml`), `pve_template_node` and `vm_pve_node` (`inventories/<env>/host_vars/*.yml`). The reference inventory uses `DC-A-PVE-11`, `DC-A-PVE-12` and `DC-A-PVE-13`; yours must match `pvecm nodes` exactly.
-2. **Privileges.** [DEPLOYMENT.md §4.2](../DEPLOYMENT.md#4-proxmox-preparation), the "Proxmox HA" lines. Use the user that owns your token.
+2. **Privileges.** [deployment guide §4.2](../DEPLOYMENT.md), the "Proxmox HA" lines. Use the user that owns your token.
 3. **Variables** in `inventories/<env>/group_vars/all/proxmox.yml`:
    ```yaml
    pve_ha_enabled: true        # false: VMs are started directly, no HA objects are created
@@ -103,7 +103,7 @@ ha-manager remove vm:242     # also deletes rule pgc-pgdb01-dev-home (it only re
 | Symptom | Cause | Fix |
 |---|---|---|
 | `Assert Proxmox VE 9 or newer for HA rules` fails | Cluster on PVE 8 | Upgrade, or `pve_ha_enabled: false` |
-| `Assert the token may manage Proxmox HA` fails, or `403 Permission check failed (/, Sys.Console)` / `(/, Sys.Audit)` | HA privileges missing on the user or, for a privsep token, on the token | [DEPLOYMENT.md §4.2](../DEPLOYMENT.md#4-proxmox-preparation); check with `pveum user token permissions <user> <token> --path /` |
+| `Assert the token may manage Proxmox HA` fails, or `403 Permission check failed (/, Sys.Console)` / `(/, Sys.Audit)` | HA privileges missing on the user or, for a privsep token, on the token | [deployment guide §4.2](../DEPLOYMENT.md); check with `pveum user token permissions <user> <token> --path /` |
 | `ACL update failed: user '...' does not exist` | Section 4 commands run with the example user `ansible@pve` | Set `PVE_USER` to the user that owns your token |
 | Clone or HA rule fails with an unknown node | Inventory node names differ from `pvecm nodes` | Section 4, step 1 |
 | `ha-manager status` shows a VM in `error` | Start failed on all allowed nodes | Find the cause in the task log on the node (`journalctl -u pve-ha-lrm`), then `ha-manager set vm:<id> --state disabled` and `--state started` |

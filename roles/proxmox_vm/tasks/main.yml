@@ -61,7 +61,7 @@
     fail_msg: >-
       Token {{ pve_api_token_id }} lacks Sys.Audit and/or Sys.Console on / (has:
       {{ proxmox_vm_pve_perms.json.data['/'] | default({}) | list | sort | join(', ') or 'nothing' }}).
-      Grant role PGC-HA on / to the user, and also to the token if it has privsep 1 (DEPLOYMENT.md section 4.2),
+      Grant role PGC-HA on / to the user, and also to the token if it has privsep 1 (DEPLOYMENT-{{ pgc_env }}.md section 4.2),
       or set pve_ha_enabled: false. Nothing was changed.
     quiet: true
   when: pve_ha_enabled | bool

@@ -1,6 +1,6 @@
 # Runbook
 
-Operations for a running cluster. Deployment is in [DEPLOYMENT.md](../DEPLOYMENT.md).
+Operations for a running cluster. Deployment is in [DEPLOYMENT-dev.md](../DEPLOYMENT-dev.md) / [DEPLOYMENT-prod.md](../DEPLOYMENT-prod.md).
 Every block says where it runs. `<env>` is `dev` or `prod`, and `pgNN` is a node.
 
 | | dev | prod |

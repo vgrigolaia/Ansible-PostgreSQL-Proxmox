@@ -1,5 +1,7 @@
 # Architecture
 
+Diagrams: [logical and traffic flow](diagrams/pgc-architecture-logical.png), [physical, Proxmox and Ceph placement](diagrams/pgc-architecture-physical.png) ([draw.io source](diagrams/pgc-architecture.drawio)).
+
 ## Environments
 | Host | Dev | Prod |
 |---|---|---|

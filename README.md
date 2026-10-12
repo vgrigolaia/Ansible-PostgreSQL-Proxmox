@@ -6,6 +6,10 @@ Ansible project that builds highly available PostgreSQL clusters on Proxmox VE: 
 AlmaLinux 10 · PostgreSQL 18 · Patroni · etcd · pgbouncer · HAProxy · keepalived · Prometheus exporters
 ```
 
+[![Logical architecture and traffic flow of the dev and prod clusters](docs/diagrams/pgc-architecture-logical-preview.png)](docs/diagrams/pgc-architecture-logical.png)
+
+*Logical architecture and traffic flow (click for full size). The physical view (Proxmox nodes, Ceph, VM placement) is in [docs/diagrams/pgc-architecture-physical.png](docs/diagrams/pgc-architecture-physical.png); both are editable in [draw.io](docs/diagrams/pgc-architecture.drawio).*
+
 - **To deploy:** follow [DEPLOYMENT-dev.md](DEPLOYMENT-dev.md) or [DEPLOYMENT-prod.md](DEPLOYMENT-prod.md) from top to bottom. Each is filled in for its environment.
 - **To operate a running cluster:** [docs/runbook.md](docs/runbook.md) (switchover, failover, rebuilds, users, logs).
 - **Proxmox HA for the VMs:** [docs/proxmox-ha.md](docs/proxmox-ha.md) (requirements, setup, failure behaviour).
@@ -231,6 +235,7 @@ docs/
   autobase-notes.md             # what was taken from autobase and what differs
   prometheus/<cluster>.yml      # generated Prometheus scrape config per env
   templates/DEPLOYMENT.md.j2    # source of DEPLOYMENT-<env>.md
+  diagrams/                     # architecture diagrams: draw.io source + PNG exports (logical, physical)
 scripts/render_deployment.py    # renders the deployment guides (make docs / make docs-check)
 scripts/vault-init.sh           # creates an environment's vault with generated passwords (make vault-init)
 ```
@@ -341,5 +346,6 @@ Any conflict stops the play with nothing changed. Removing VMs is always a manua
 | [docs/runbook.md](docs/runbook.md) | Operating a running cluster |
 | [docs/architecture.md](docs/architecture.md) | Architecture reference (ports, disks, isolation) |
 | [docs/proxmox-ha.md](docs/proxmox-ha.md) | Proxmox HA for the DB VMs: requirements, setup, failure behaviour |
+| [docs/diagrams/](docs/diagrams/) | Architecture diagrams: logical/traffic flow and physical/Proxmox placement (`.drawio` source + PNG) |
 | [docs/autobase-notes.md](docs/autobase-notes.md) | Design comparison with autobase |
 | `docs/prometheus/<cluster>.yml` | Scrape jobs to add to Prometheus |

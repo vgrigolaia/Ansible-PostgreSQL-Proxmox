@@ -1,0 +1,680 @@
+<mxfile host="drawio" agent="ansible-postgres-proxmox" version="24.0.0">
+  <diagram id="p1-logical" name="1 · Logical &amp; traffic flow">
+    <mxGraphModel dx="1600" dy="1000" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="0" pageScale="1" math="0" shadow="0" adaptiveColors="auto">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="p1title" value="&lt;b style='font-size:18px'&gt;pgc-dev / pgc-prod — logical architecture&lt;/b&gt;&lt;br&gt;&lt;span style='font-size:11px'&gt;Source: ansible-postgres-proxmox (inventories/*, playbooks/group_vars, roles/*/defaults + templates). Leader/replica roles are dynamic (Patroni + etcd).&lt;/span&gt;" style="text;html=1;align=left;verticalAlign=top;whiteSpace=wrap;" vertex="1" parent="1">
+          <mxGeometry x="40" y="10" width="1740" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="z_out" value="Outside the DB subnet (traffic sources)" style="swimlane;container=1;collapsible=0;startSize=30;fontStyle=1;fontSize=13;rounded=1;arcSize=1;html=1;whiteSpace=wrap;align=left;spacingLeft=10;fillColor=#f5f5f5;strokeColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="40" y="80" width="320" height="820" as="geometry" />
+        </mxCell>
+        <mxCell id="admin" value="&lt;b&gt;Admin network 10.119.10.0/24&lt;/b&gt;&lt;br&gt;Ansible workstation · DBAs&lt;br&gt;&lt;i&gt;admin_cidrs&lt;/i&gt; → 22, 5000, 5001, 6432, 8404, ICMP" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffffff;strokeColor=#666666;" vertex="1" parent="z_out">
+          <mxGeometry x="20" y="50" width="280" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="app" value="&lt;b&gt;Application servers&lt;/b&gt;&lt;br&gt;&lt;i&gt;app_cidrs: [ ]&lt;/i&gt; — EMPTY&lt;br&gt;No app tier defined in the repo. Once set: 5000 / 5001 / 6432" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffffff;strokeColor=#b85450;dashed=1;fontColor=#b85450;" vertex="1" parent="z_out">
+          <mxGeometry x="20" y="220" width="280" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="prom" value="&lt;b&gt;Prometheus 10.45.66.120&lt;/b&gt;&lt;br&gt;not managed here; scrape jobs generated to docs/prometheus/pgc-&amp;lt;env&amp;gt;.yml" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="z_out">
+          <mxGeometry x="20" y="390" width="280" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="nodmz" value="&lt;b&gt;Not in the code:&lt;/b&gt;&lt;br&gt;Public / DMZ zone, edge reverse proxy (Nginx), ingress, application layer.&lt;br&gt;&lt;br&gt;This repo builds only the database tier. The entry point is the keepalived VIP on the internal LAN; the only network allowed in today is the admin network." style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffffff;strokeColor=#b85450;dashed=1;fontColor=#b85450;align=left;spacing=8;" vertex="1" parent="z_out">
+          <mxGeometry x="20" y="560" width="280" height="220" as="geometry" />
+        </mxCell>
+        <mxCell id="z_lan" value="Internal LAN 10.50.200.0/24 · gw 10.50.200.1 · Proxmox bridge vmbr0, untagged · dev AND prod share this subnet" style="swimlane;container=1;collapsible=0;startSize=30;fontStyle=1;fontSize=13;rounded=1;arcSize=1;html=1;whiteSpace=wrap;align=left;spacingLeft=10;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
+          <mxGeometry x="420" y="80" width="1360" height="820" as="geometry" />
+        </mxCell>
+        <mxCell id="iso" value="dev ↔ prod isolation is host-level only: firewalld DROP zone 'pgc' + reject rules (ingress+egress) for the other env's IPs/VIP, pg_hba + pgbouncer_hba reject, separate etcd CA, separate VRID" style="text;html=1;whiteSpace=wrap;fontSize=11;fontColor=#b85450;align=left;" vertex="1" parent="z_lan">
+          <mxGeometry x="20" y="34" width="1320" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="edev" value="pgc-dev · Patroni scope pgc-dev · nodes 10.50.200.242 / .243 / .244" style="swimlane;container=1;collapsible=0;startSize=30;fontStyle=1;fontSize=13;rounded=1;arcSize=1;html=1;whiteSpace=wrap;align=left;spacingLeft=10;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="z_lan">
+          <mxGeometry x="20" y="70" width="640" height="730" as="geometry" />
+        </mxCell>
+        <mxCell id="edevvip" value="&lt;b&gt;Tier 1 · Entry — VIP 10.50.200.245/24&lt;/b&gt;&lt;br&gt;keepalived 2.2.8 · unicast VRRP · VRID 242 · all BACKUP + nopreempt" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffffff;strokeColor=#666666;" vertex="1" parent="edev">
+          <mxGeometry x="20" y="40" width="600" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="edevhap" value="&lt;b&gt;Tier 2 · Routing — HAProxy 3.0.5 ×3&lt;/b&gt; (serves on the VIP holder)&lt;br&gt;:5000 → primary (RW, check GET /primary) · :5001 → replicas (RO, roundrobin, GET /replica?lag=16MB) · :8404 stats" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffffff;strokeColor=#666666;" vertex="1" parent="edev">
+          <mxGeometry x="20" y="140" width="600" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="edevpgb" value="&lt;b&gt;Tier 3 · Pooling — PgBouncer 1.26.0 ×3 :6432&lt;/b&gt;&lt;br&gt;pool_mode=transaction · max_client_conn 1000 · pool 20 + 5 reserve · max_db_conn 150 · auth_query + SCRAM" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffffff;strokeColor=#666666;" vertex="1" parent="edev">
+          <mxGeometry x="20" y="250" width="600" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="edevdata" value="Tier 4 · Data — PostgreSQL 18 + Patroni 4.1.5" style="swimlane;container=1;collapsible=0;startSize=30;fontStyle=1;fontSize=13;rounded=1;arcSize=1;html=1;whiteSpace=wrap;align=left;spacingLeft=10;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=12;" vertex="1" parent="edev">
+          <mxGeometry x="20" y="360" width="600" height="180" as="geometry" />
+        </mxCell>
+        <mxCell id="edevldr" value="&lt;b&gt;Leader&lt;/b&gt; (read-write)&lt;br&gt;elected via etcd lock" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffffff;strokeColor=#666666;strokeColor=#b85450;strokeWidth=2;" vertex="1" parent="edevdata">
+          <mxGeometry x="210" y="40" width="180" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="edevr1" value="&lt;b&gt;Replica&lt;/b&gt; (read-only)" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffffff;strokeColor=#666666;" vertex="1" parent="edevdata">
+          <mxGeometry x="15" y="120" width="230" height="45" as="geometry" />
+        </mxCell>
+        <mxCell id="edevr2" value="&lt;b&gt;Replica&lt;/b&gt; (read-only)" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffffff;strokeColor=#666666;" vertex="1" parent="edevdata">
+          <mxGeometry x="355" y="120" width="230" height="45" as="geometry" />
+        </mxCell>
+        <mxCell id="edevetcd" value="&lt;b&gt;Tier 5 · DCS — etcd 3.7.2 ×3&lt;/b&gt; (co-located on the DB nodes)&lt;br&gt;mTLS client :2379 / peer :2380 · quorum 2 of 3 · Patroni TTL 30 s, loop 10 s" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="edev">
+          <mxGeometry x="20" y="570" width="600" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="edevprop" value="Replication: &lt;b&gt;asynchronous&lt;/b&gt; · watchdog (softdog): &lt;b&gt;automatic&lt;/b&gt; · use_slots · pg_rewind · max lag on failover 1 MB" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="edev">
+          <mxGeometry x="20" y="650" width="600" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="edev_1" value="TCP 5000 RW / 5001 RO" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;html=1;endArrow=block;endFill=1;fontSize=10;labelBackgroundColor=#ffffff;jumpStyle=arc;jumpSize=10;strokeColor=#333333;strokeWidth=1.5;" edge="1" parent="1" source="edevvip" target="edevhap">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edev_2" value="TCP 6432 · health: Patroni :8008" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;html=1;endArrow=block;endFill=1;fontSize=10;labelBackgroundColor=#ffffff;jumpStyle=arc;jumpSize=10;strokeColor=#333333;strokeWidth=1.5;" edge="1" parent="1" source="edevhap" target="edevpgb">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edev_3" value="127.0.0.1:5432 (own node)" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;html=1;endArrow=block;endFill=1;fontSize=10;labelBackgroundColor=#ffffff;jumpStyle=arc;jumpSize=10;strokeColor=#333333;strokeWidth=1.5;" edge="1" parent="1" source="edevpgb" target="edevdata">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edev_4" value="Patroni → etcd :2379 mTLS" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;html=1;endArrow=block;endFill=1;fontSize=10;labelBackgroundColor=#ffffff;jumpStyle=arc;jumpSize=10;strokeColor=#d79b00;strokeWidth=1.5;dashed=1;dashPattern=1 3;endArrow=none;startArrow=none;fontColor=#9a6b00;endArrow=block;endFill=1;" edge="1" parent="1" source="edevdata" target="edevetcd">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edev_w1" value="WAL :5432" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;html=1;endArrow=block;endFill=1;fontSize=10;labelBackgroundColor=#ffffff;jumpStyle=arc;jumpSize=10;strokeColor=#9673a6;strokeWidth=2;fontColor=#6b4b80;exitX=0.3;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="edevldr" target="edevr1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edev_w2" value="WAL :5432" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;html=1;endArrow=block;endFill=1;fontSize=10;labelBackgroundColor=#ffffff;jumpStyle=arc;jumpSize=10;strokeColor=#9673a6;strokeWidth=2;fontColor=#6b4b80;exitX=0.7;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="edevldr" target="edevr2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="eprod" value="pgc-prod · Patroni scope pgc-prod · nodes 10.50.200.246 / .247 / .248" style="swimlane;container=1;collapsible=0;startSize=30;fontStyle=1;fontSize=13;rounded=1;arcSize=1;html=1;whiteSpace=wrap;align=left;spacingLeft=10;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="z_lan">
+          <mxGeometry x="700" y="70" width="640" height="730" as="geometry" />
+        </mxCell>
+        <mxCell id="eprodvip" value="&lt;b&gt;Tier 1 · Entry — VIP 10.50.200.249/24&lt;/b&gt;&lt;br&gt;keepalived 2.2.8 · unicast VRRP · VRID 246 · all BACKUP + nopreempt" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffffff;strokeColor=#666666;" vertex="1" parent="eprod">
+          <mxGeometry x="20" y="40" width="600" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="eprodhap" value="&lt;b&gt;Tier 2 · Routing — HAProxy 3.0.5 ×3&lt;/b&gt; (serves on the VIP holder)&lt;br&gt;:5000 → primary (RW, check GET /primary) · :5001 → replicas (RO, roundrobin, GET /replica?lag=16MB) · :8404 stats" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffffff;strokeColor=#666666;" vertex="1" parent="eprod">
+          <mxGeometry x="20" y="140" width="600" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="eprodpgb" value="&lt;b&gt;Tier 3 · Pooling — PgBouncer 1.26.0 ×3 :6432&lt;/b&gt;&lt;br&gt;pool_mode=transaction · max_client_conn 1000 · pool 20 + 5 reserve · max_db_conn 150 · auth_query + SCRAM" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffffff;strokeColor=#666666;" vertex="1" parent="eprod">
+          <mxGeometry x="20" y="250" width="600" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="eproddata" value="Tier 4 · Data — PostgreSQL 18 + Patroni 4.1.5" style="swimlane;container=1;collapsible=0;startSize=30;fontStyle=1;fontSize=13;rounded=1;arcSize=1;html=1;whiteSpace=wrap;align=left;spacingLeft=10;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=12;" vertex="1" parent="eprod">
+          <mxGeometry x="20" y="360" width="600" height="180" as="geometry" />
+        </mxCell>
+        <mxCell id="eprodldr" value="&lt;b&gt;Leader&lt;/b&gt; (read-write)&lt;br&gt;elected via etcd lock" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffffff;strokeColor=#666666;strokeColor=#b85450;strokeWidth=2;" vertex="1" parent="eproddata">
+          <mxGeometry x="210" y="40" width="180" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="eprodr1" value="&lt;b&gt;Sync Standby&lt;/b&gt; (read-only)" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffffff;strokeColor=#666666;" vertex="1" parent="eproddata">
+          <mxGeometry x="15" y="120" width="230" height="45" as="geometry" />
+        </mxCell>
+        <mxCell id="eprodr2" value="&lt;b&gt;Replica&lt;/b&gt; (read-only)" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffffff;strokeColor=#666666;" vertex="1" parent="eproddata">
+          <mxGeometry x="355" y="120" width="230" height="45" as="geometry" />
+        </mxCell>
+        <mxCell id="eprodetcd" value="&lt;b&gt;Tier 5 · DCS — etcd 3.7.2 ×3&lt;/b&gt; (co-located on the DB nodes)&lt;br&gt;mTLS client :2379 / peer :2380 · quorum 2 of 3 · Patroni TTL 30 s, loop 10 s" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="eprod">
+          <mxGeometry x="20" y="570" width="600" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="eprodprop" value="Replication: &lt;b&gt;synchronous, non-strict (1 Sync Standby)&lt;/b&gt; · watchdog (softdog): &lt;b&gt;required&lt;/b&gt; · use_slots · pg_rewind · max lag on failover 1 MB" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="eprod">
+          <mxGeometry x="20" y="650" width="600" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="eprod_1" value="TCP 5000 RW / 5001 RO" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;html=1;endArrow=block;endFill=1;fontSize=10;labelBackgroundColor=#ffffff;jumpStyle=arc;jumpSize=10;strokeColor=#333333;strokeWidth=1.5;" edge="1" parent="1" source="eprodvip" target="eprodhap">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="eprod_2" value="TCP 6432 · health: Patroni :8008" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;html=1;endArrow=block;endFill=1;fontSize=10;labelBackgroundColor=#ffffff;jumpStyle=arc;jumpSize=10;strokeColor=#333333;strokeWidth=1.5;" edge="1" parent="1" source="eprodhap" target="eprodpgb">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="eprod_3" value="127.0.0.1:5432 (own node)" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;html=1;endArrow=block;endFill=1;fontSize=10;labelBackgroundColor=#ffffff;jumpStyle=arc;jumpSize=10;strokeColor=#333333;strokeWidth=1.5;" edge="1" parent="1" source="eprodpgb" target="eproddata">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="eprod_4" value="Patroni → etcd :2379 mTLS" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;html=1;endArrow=block;endFill=1;fontSize=10;labelBackgroundColor=#ffffff;jumpStyle=arc;jumpSize=10;strokeColor=#d79b00;strokeWidth=1.5;dashed=1;dashPattern=1 3;endArrow=none;startArrow=none;fontColor=#9a6b00;endArrow=block;endFill=1;" edge="1" parent="1" source="eproddata" target="eprodetcd">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="eprod_w1" value="WAL :5432 sync" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;html=1;endArrow=block;endFill=1;fontSize=10;labelBackgroundColor=#ffffff;jumpStyle=arc;jumpSize=10;strokeColor=#9673a6;strokeWidth=2;fontColor=#6b4b80;exitX=0.3;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="eprodldr" target="eprodr1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="eprod_w2" value="WAL :5432" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;html=1;endArrow=block;endFill=1;fontSize=10;labelBackgroundColor=#ffffff;jumpStyle=arc;jumpSize=10;strokeColor=#9673a6;strokeWidth=2;fontColor=#6b4b80;exitX=0.7;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="eprodldr" target="eprodr2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="x_adm_dev" value="admin" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;html=1;endArrow=block;endFill=1;fontSize=10;labelBackgroundColor=#ffffff;jumpStyle=arc;jumpSize=10;strokeColor=#333333;strokeWidth=1.5;exitX=1;exitY=0.6818181818181818;exitDx=0;exitDy=0;entryX=0;entryY=0.25;entryDx=0;entryDy=0;" edge="1" parent="1" source="admin" target="edevvip">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="x_app_dev" value="app" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;html=1;endArrow=block;endFill=1;fontSize=10;labelBackgroundColor=#ffffff;jumpStyle=arc;jumpSize=10;strokeColor=#333333;strokeWidth=1.5;dashed=1;exitX=1;exitY=0.2727272727272727;exitDx=0;exitDy=0;entryX=0;entryY=0.75;entryDx=0;entryDy=0;" edge="1" parent="1" source="app" target="edevvip">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="400" y="330" />
+              <mxPoint x="400" y="235" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="x_adm_prod" value="22 · 5000/5001 · 6432 · 8404" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;html=1;endArrow=block;endFill=1;fontSize=10;labelBackgroundColor=#ffffff;jumpStyle=arc;jumpSize=10;strokeColor=#333333;strokeWidth=1.5;exitX=0;exitY=0.7272727272727273;exitDx=0;exitDy=0;entryX=0;entryY=0.75;entryDx=0;entryDy=0;" edge="1" parent="1" source="admin" target="eprodvip">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="26" y="210" />
+              <mxPoint x="26" y="930" />
+              <mxPoint x="1108" y="930" />
+              <mxPoint x="1108" y="235" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="x_app_prod" value="5000/5001 · 6432 (once app_cidrs set)" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;html=1;endArrow=block;endFill=1;fontSize=10;labelBackgroundColor=#ffffff;jumpStyle=arc;jumpSize=10;strokeColor=#333333;strokeWidth=1.5;dashed=1;exitX=0;exitY=0.7272727272727273;exitDx=0;exitDy=0;entryX=0;entryY=0.25;entryDx=0;entryDy=0;" edge="1" parent="1" source="app" target="eprodvip">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="32" y="380" />
+              <mxPoint x="32" y="918" />
+              <mxPoint x="1095" y="918" />
+              <mxPoint x="1095" y="205" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="x_prom_dev" value="scrape" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;html=1;endArrow=block;endFill=1;fontSize=10;labelBackgroundColor=#ffffff;jumpStyle=arc;jumpSize=10;strokeColor=#82b366;strokeWidth=1.5;dashed=1;fontColor=#4d7a3a;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5136986301369864;entryDx=0;entryDy=0;" edge="1" parent="1" source="prom" target="edev">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="x_prom_prod" value="scrape 9100 9187 9127 8008 8404 2381" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;html=1;endArrow=block;endFill=1;fontSize=10;labelBackgroundColor=#ffffff;jumpStyle=arc;jumpSize=10;strokeColor=#82b366;strokeWidth=1.5;dashed=1;fontColor=#4d7a3a;exitX=0;exitY=0.8181818181818182;exitDx=0;exitDy=0;entryX=0.5;entryY=1;entryDx=0;entryDy=0;" edge="1" parent="1" source="prom" target="eprod">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="20" y="560" />
+              <mxPoint x="20" y="945" />
+              <mxPoint x="1440.0" y="945" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="p1legend" value="&lt;div style='text-align:left'&gt;&lt;b style='font-size:13px'&gt;Ports &amp;amp; protocols (from role defaults / firewall role)&lt;/b&gt;&lt;table style='font-size:11px;border-collapse:collapse;margin-top:4px'&gt;&lt;tr&gt;&lt;th align='left'&gt;Port&lt;/th&gt;&lt;th align='left'&gt;Proto&lt;/th&gt;&lt;th align='left'&gt;Path&lt;/th&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td style='padding:2px 6px;border-bottom:1px solid #ccc'&gt;&lt;b&gt;443 / 8006&lt;/b&gt;&lt;/td&gt;&lt;td style='padding:2px 6px;border-bottom:1px solid #ccc'&gt;HTTPS&lt;/td&gt;&lt;td style='padding:2px 6px;border-bottom:1px solid #ccc'&gt;Workstation → Proxmox VE API 10.50.200.11 (API token; provision --tags vms)&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td style='padding:2px 6px;border-bottom:1px solid #ccc'&gt;&lt;b&gt;22&lt;/b&gt;&lt;/td&gt;&lt;td style='padding:2px 6px;border-bottom:1px solid #ccc'&gt;SSH&lt;/td&gt;&lt;td style='padding:2px 6px;border-bottom:1px solid #ccc'&gt;Admin net → PVE-11 (root, template build) and pgdb* (user ansible, key-only)&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td style='padding:2px 6px;border-bottom:1px solid #ccc'&gt;&lt;b&gt;5000&lt;/b&gt;&lt;/td&gt;&lt;td style='padding:2px 6px;border-bottom:1px solid #ccc'&gt;TCP&lt;/td&gt;&lt;td style='padding:2px 6px;border-bottom:1px solid #ccc'&gt;Clients → VIP → HAProxy 'primary' (read-write) → PgBouncer :6432 on the leader&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td style='padding:2px 6px;border-bottom:1px solid #ccc'&gt;&lt;b&gt;5001&lt;/b&gt;&lt;/td&gt;&lt;td style='padding:2px 6px;border-bottom:1px solid #ccc'&gt;TCP&lt;/td&gt;&lt;td style='padding:2px 6px;border-bottom:1px solid #ccc'&gt;Clients → VIP → HAProxy 'replicas' (read-only, roundrobin, lag ≤ 16MB) → PgBouncer :6432&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td style='padding:2px 6px;border-bottom:1px solid #ccc'&gt;&lt;b&gt;6432&lt;/b&gt;&lt;/td&gt;&lt;td style='padding:2px 6px;border-bottom:1px solid #ccc'&gt;TCP&lt;/td&gt;&lt;td style='padding:2px 6px;border-bottom:1px solid #ccc'&gt;PgBouncer (transaction pooling); HAProxy backends + direct admin/app access&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td style='padding:2px 6px;border-bottom:1px solid #ccc'&gt;&lt;b&gt;5432&lt;/b&gt;&lt;/td&gt;&lt;td style='padding:2px 6px;border-bottom:1px solid #ccc'&gt;TCP&lt;/td&gt;&lt;td style='padding:2px 6px;border-bottom:1px solid #ccc'&gt;PostgreSQL 18: PgBouncer → 127.0.0.1, WAL streaming (replicator, slots), pg_rewind&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td style='padding:2px 6px;border-bottom:1px solid #ccc'&gt;&lt;b&gt;8008&lt;/b&gt;&lt;/td&gt;&lt;td style='padding:2px 6px;border-bottom:1px solid #ccc'&gt;HTTP&lt;/td&gt;&lt;td style='padding:2px 6px;border-bottom:1px solid #ccc'&gt;Patroni REST: HAProxy health checks /primary /replica, peers, Prometheus /metrics&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td style='padding:2px 6px;border-bottom:1px solid #ccc'&gt;&lt;b&gt;2379&lt;/b&gt;&lt;/td&gt;&lt;td style='padding:2px 6px;border-bottom:1px solid #ccc'&gt;HTTPS mTLS&lt;/td&gt;&lt;td style='padding:2px 6px;border-bottom:1px solid #ccc'&gt;etcd client: Patroni → etcd (per-env CA)&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td style='padding:2px 6px;border-bottom:1px solid #ccc'&gt;&lt;b&gt;2380&lt;/b&gt;&lt;/td&gt;&lt;td style='padding:2px 6px;border-bottom:1px solid #ccc'&gt;HTTPS mTLS&lt;/td&gt;&lt;td style='padding:2px 6px;border-bottom:1px solid #ccc'&gt;etcd peer: raft between the 3 members (quorum 2/3)&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td style='padding:2px 6px;border-bottom:1px solid #ccc'&gt;&lt;b&gt;2381&lt;/b&gt;&lt;/td&gt;&lt;td style='padding:2px 6px;border-bottom:1px solid #ccc'&gt;HTTP&lt;/td&gt;&lt;td style='padding:2px 6px;border-bottom:1px solid #ccc'&gt;etcd /metrics (Prometheus only)&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td style='padding:2px 6px;border-bottom:1px solid #ccc'&gt;&lt;b&gt;8404&lt;/b&gt;&lt;/td&gt;&lt;td style='padding:2px 6px;border-bottom:1px solid #ccc'&gt;HTTP&lt;/td&gt;&lt;td style='padding:2px 6px;border-bottom:1px solid #ccc'&gt;HAProxy stats /stats, /health (keepalived check), /metrics&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td style='padding:2px 6px;border-bottom:1px solid #ccc'&gt;&lt;b&gt;VRRP (112)&lt;/b&gt;&lt;/td&gt;&lt;td style='padding:2px 6px;border-bottom:1px solid #ccc'&gt;IP proto&lt;/td&gt;&lt;td style='padding:2px 6px;border-bottom:1px solid #ccc'&gt;keepalived unicast between env nodes; VRID dev 242 / prod 246&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td style='padding:2px 6px;border-bottom:1px solid #ccc'&gt;&lt;b&gt;9100 / 9187 / 9127&lt;/b&gt;&lt;/td&gt;&lt;td style='padding:2px 6px;border-bottom:1px solid #ccc'&gt;HTTP&lt;/td&gt;&lt;td style='padding:2px 6px;border-bottom:1px solid #ccc'&gt;node_exporter / postgres_exporter / pgbouncer_exporter → Prometheus 10.45.66.120&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;&lt;div style='margin-top:6px;font-size:11px'&gt;&lt;span style='color:#b85450'&gt;&lt;b&gt;━━&lt;/b&gt; read-write&lt;/span&gt; &amp;nbsp; &lt;span style='color:#3b6db3'&gt;&lt;b&gt;╍╍&lt;/b&gt; read-only&lt;/span&gt; &amp;nbsp; &lt;span style='color:#9673a6'&gt;&lt;b&gt;━━&lt;/b&gt; WAL streaming&lt;/span&gt; &amp;nbsp; &lt;span style='color:#d79b00'&gt;&lt;b&gt;┈┈&lt;/b&gt; etcd raft / DCS&lt;/span&gt; &amp;nbsp; &lt;span style='color:#82b366'&gt;&lt;b&gt;╍╍&lt;/b&gt; monitoring scrape&lt;/span&gt; &amp;nbsp; &lt;span style='color:#b85450'&gt;dashed red box = gap / not in repo&lt;/span&gt;&lt;/div&gt;&lt;/div&gt;" style="rounded=1;arcSize=2;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=10;fillColor=#ffffff;strokeColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="40" y="980" width="900" height="310" as="geometry" />
+        </mxCell>
+        <mxCell id="p1gaps" value="&lt;div style='text-align:left'&gt;&lt;b style='font-size:13px;color:#b85450'&gt;Gaps and risks found in the code&lt;/b&gt;&lt;ol style='font-size:11px;padding-left:18px;margin-top:4px'&gt;&lt;li&gt;&lt;b&gt;No backup / PITR.&lt;/b&gt; No pgBackRest, archive_mode off; runbook: &quot;planned&quot;. Ceph copies + Patroni replicas are not backups: a DROP TABLE replicates everywhere instantly.&lt;/li&gt;&lt;li&gt;&lt;b&gt;Shared failure domain for dev and prod:&lt;/b&gt; same /24, same 3 Proxmox hosts, same Ceph pool RBD-Disk. Dev load or a Ceph incident hits prod. Isolation is firewall rules only.&lt;/li&gt;&lt;li&gt;&lt;b&gt;WAL on Ceph.&lt;/b&gt; pgdata, pgwal and pgaudit all sit on RBD-Disk. Every commit waits for a Ceph replicated write; prod sync replication adds a second network round-trip.&lt;/li&gt;&lt;li&gt;&lt;b&gt;No app/edge tier.&lt;/b&gt; app_cidrs is empty, so only the admin network can reach 5000/5001/6432.&lt;/li&gt;&lt;li&gt;One DNS resolver (1.1.1.1, public); NTP = AlmaLinux public pool (ntp_servers: []).&lt;/li&gt;&lt;li&gt;Comment drift: keepalived role default says priority 150/140/130; host_vars set 100/90/80 (host_vars win).&lt;/li&gt;&lt;/ol&gt;&lt;/div&gt;" style="rounded=1;arcSize=2;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=10;fillColor=#ffffff;strokeColor=#b85450;dashed=1;fontColor=#b85450;fontColor=#000000;" vertex="1" parent="1">
+          <mxGeometry x="980" y="980" width="800" height="310" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram id="p2-infra" name="2 · Physical &amp; virtual fabric">
+    <mxGraphModel dx="1600" dy="1000" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="0" pageScale="1" math="0" shadow="0" adaptiveColors="auto">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="p2title" value="&lt;b style='font-size:18px'&gt;Proxmox / Ceph underlay, VM placement and PostgreSQL HA internals&lt;/b&gt;&lt;br&gt;&lt;span style='font-size:11px'&gt;Only what Ansible references is drawn. Ceph networks, bonds, VLANs and OSD layout are not defined in this repo.&lt;/span&gt;" style="text;html=1;align=left;verticalAlign=top;whiteSpace=wrap;" vertex="1" parent="1">
+          <mxGeometry x="40" y="10" width="2100" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="cl" value="Proxmox VE 9 cluster — DC-A (API endpoint 10.50.200.11:8006 · pool postgresql-pool · HA enabled)" style="swimlane;container=1;collapsible=0;startSize=30;fontStyle=1;fontSize=13;rounded=1;arcSize=1;html=1;whiteSpace=wrap;align=left;spacingLeft=10;fillColor=#f5f5f5;strokeColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="40" y="70" width="1780" height="620" as="geometry" />
+        </mxCell>
+        <mxCell id="pve11" value="DC-A-PVE-11 · 10.50.200.11 · template + API node" style="swimlane;container=1;collapsible=0;startSize=30;fontStyle=1;fontSize=13;rounded=1;arcSize=1;html=1;whiteSpace=wrap;align=left;spacingLeft=10;fillColor=#ffffff;strokeColor=#666666;fontSize=12;" vertex="1" parent="cl">
+          <mxGeometry x="15" y="40" width="570" height="560" as="geometry" />
+        </mxCell>
+        <mxCell id="pve11br" value="&lt;b&gt;vmbr0&lt;/b&gt; — untagged (net_vlan_tag empty) · VM NICs virtio,bridge=vmbr0" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="pve11">
+          <mxGeometry x="12" y="40" width="546" height="28" as="geometry" />
+        </mxCell>
+        <mxCell id="pve11vmdev" value="pgdb01-dev · VM 242 · 10.50.200.242&lt;br&gt;&lt;span style='font-weight:normal'&gt;AlmaLinux 10 · 2 vCPU x86-64-v3 · 4 GiB&lt;/span&gt;" style="swimlane;container=1;collapsible=0;startSize=30;fontStyle=1;fontSize=13;rounded=1;arcSize=1;html=1;whiteSpace=wrap;align=left;spacingLeft=10;fillColor=#dae8fc;strokeColor=#6c8ebf;startSize=44;fontSize=11;align=center;spacingLeft=0;" vertex="1" parent="pve11">
+          <mxGeometry x="12" y="85" width="265" height="400" as="geometry" />
+        </mxCell>
+        <mxCell id="pve11vmdevs0" value="PostgreSQL 18 :5432" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffffff;strokeColor=#666666;fontSize=10;arcSize=20;" vertex="1" parent="pve11vmdev">
+          <mxGeometry x="10" y="52" width="245" height="22" as="geometry" />
+        </mxCell>
+        <mxCell id="pve11vmdevs1" value="Patroni 4.1.5 :8008" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffffff;strokeColor=#666666;fontSize=10;arcSize=20;" vertex="1" parent="pve11vmdev">
+          <mxGeometry x="10" y="76" width="245" height="22" as="geometry" />
+        </mxCell>
+        <mxCell id="pve11vmdevs2" value="etcd 3.7.2 :2379 / :2380 · :2381" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffffff;strokeColor=#666666;fontSize=10;arcSize=20;" vertex="1" parent="pve11vmdev">
+          <mxGeometry x="10" y="100" width="245" height="22" as="geometry" />
+        </mxCell>
+        <mxCell id="pve11vmdevs3" value="PgBouncer 1.26.0 :6432" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffffff;strokeColor=#666666;fontSize=10;arcSize=20;" vertex="1" parent="pve11vmdev">
+          <mxGeometry x="10" y="124" width="245" height="22" as="geometry" />
+        </mxCell>
+        <mxCell id="pve11vmdevs4" value="HAProxy 3.0.5 :5000 / :5001 / :8404" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffffff;strokeColor=#666666;fontSize=10;arcSize=20;" vertex="1" parent="pve11vmdev">
+          <mxGeometry x="10" y="148" width="245" height="22" as="geometry" />
+        </mxCell>
+        <mxCell id="pve11vmdevs5" value="keepalived 2.2.8 · VRRP prio 100" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffffff;strokeColor=#666666;fontSize=10;arcSize=20;" vertex="1" parent="pve11vmdev">
+          <mxGeometry x="10" y="172" width="245" height="22" as="geometry" />
+        </mxCell>
+        <mxCell id="pve11vmdevs6" value="exporters :9100 / :9187 / :9127" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffffff;strokeColor=#666666;fontSize=10;arcSize=20;" vertex="1" parent="pve11vmdev">
+          <mxGeometry x="10" y="196" width="245" height="22" as="geometry" />
+        </mxCell>
+        <mxCell id="pve11vmdevs7" value="firewalld zone pgc (DROP)" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffffff;strokeColor=#666666;fontSize=10;arcSize=20;" vertex="1" parent="pve11vmdev">
+          <mxGeometry x="10" y="220" width="245" height="22" as="geometry" />
+        </mxCell>
+        <mxCell id="pve11vmdevdl" value="&lt;b&gt;Disks&lt;/b&gt; (SCSI, virtio-scsi-single, iothread, discard)" style="text;html=1;fontSize=10;align=left;" vertex="1" parent="pve11vmdev">
+          <mxGeometry x="10" y="248" width="245" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="pve11vmdevd0" value="scsi0 OS 32G · VG almalinux: / 16G · /var 8G · /home 2G · swap 4G" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;" vertex="1" parent="pve11vmdev">
+          <mxGeometry x="10" y="270" width="245" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="pve11vmdevd1" value="scsi1 pgdata 20G → /var/lib/pgsql" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;" vertex="1" parent="pve11vmdev">
+          <mxGeometry x="10" y="310" width="245" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="pve11vmdevd2" value="scsi2 pgwal 10G → /pgwal" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;" vertex="1" parent="pve11vmdev">
+          <mxGeometry x="10" y="338" width="245" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="pve11vmdevd3" value="scsi3 pgaudit 10G → /pg_audit_logs" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;" vertex="1" parent="pve11vmdev">
+          <mxGeometry x="10" y="366" width="245" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="pve11vmprod" value="pgdb01-prod · VM 246 · 10.50.200.246&lt;br&gt;&lt;span style='font-weight:normal'&gt;AlmaLinux 10 · 2 vCPU x86-64-v3 · 4 GiB&lt;/span&gt;" style="swimlane;container=1;collapsible=0;startSize=30;fontStyle=1;fontSize=13;rounded=1;arcSize=1;html=1;whiteSpace=wrap;align=left;spacingLeft=10;fillColor=#f8cecc;strokeColor=#b85450;startSize=44;fontSize=11;align=center;spacingLeft=0;" vertex="1" parent="pve11">
+          <mxGeometry x="293" y="85" width="265" height="400" as="geometry" />
+        </mxCell>
+        <mxCell id="pve11vmprods0" value="PostgreSQL 18 :5432" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffffff;strokeColor=#666666;fontSize=10;arcSize=20;" vertex="1" parent="pve11vmprod">
+          <mxGeometry x="10" y="52" width="245" height="22" as="geometry" />
+        </mxCell>
+        <mxCell id="pve11vmprods1" value="Patroni 4.1.5 :8008" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffffff;strokeColor=#666666;fontSize=10;arcSize=20;" vertex="1" parent="pve11vmprod">
+          <mxGeometry x="10" y="76" width="245" height="22" as="geometry" />
+        </mxCell>
+        <mxCell id="pve11vmprods2" value="etcd 3.7.2 :2379 / :2380 · :2381" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffffff;strokeColor=#666666;fontSize=10;arcSize=20;" vertex="1" parent="pve11vmprod">
+          <mxGeometry x="10" y="100" width="245" height="22" as="geometry" />
+        </mxCell>
+        <mxCell id="pve11vmprods3" value="PgBouncer 1.26.0 :6432" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffffff;strokeColor=#666666;fontSize=10;arcSize=20;" vertex="1" parent="pve11vmprod">
+          <mxGeometry x="10" y="124" width="245" height="22" as="geometry" />
+        </mxCell>
+        <mxCell id="pve11vmprods4" value="HAProxy 3.0.5 :5000 / :5001 / :8404" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffffff;strokeColor=#666666;fontSize=10;arcSize=20;" vertex="1" parent="pve11vmprod">
+          <mxGeometry x="10" y="148" width="245" height="22" as="geometry" />
+        </mxCell>
+        <mxCell id="pve11vmprods5" value="keepalived 2.2.8 · VRRP prio 100" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffffff;strokeColor=#666666;fontSize=10;arcSize=20;" vertex="1" parent="pve11vmprod">
+          <mxGeometry x="10" y="172" width="245" height="22" as="geometry" />
+        </mxCell>
+        <mxCell id="pve11vmprods6" value="exporters :9100 / :9187 / :9127" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffffff;strokeColor=#666666;fontSize=10;arcSize=20;" vertex="1" parent="pve11vmprod">
+          <mxGeometry x="10" y="196" width="245" height="22" as="geometry" />
+        </mxCell>
+        <mxCell id="pve11vmprods7" value="firewalld zone pgc (DROP)" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffffff;strokeColor=#666666;fontSize=10;arcSize=20;" vertex="1" parent="pve11vmprod">
+          <mxGeometry x="10" y="220" width="245" height="22" as="geometry" />
+        </mxCell>
+        <mxCell id="pve11vmproddl" value="&lt;b&gt;Disks&lt;/b&gt; (SCSI, virtio-scsi-single, iothread, discard)" style="text;html=1;fontSize=10;align=left;" vertex="1" parent="pve11vmprod">
+          <mxGeometry x="10" y="248" width="245" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="pve11vmprodd0" value="scsi0 OS 32G · VG almalinux: / 16G · /var 8G · /home 2G · swap 4G" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;" vertex="1" parent="pve11vmprod">
+          <mxGeometry x="10" y="270" width="245" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="pve11vmprodd1" value="scsi1 pgdata 20G → /var/lib/pgsql" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;" vertex="1" parent="pve11vmprod">
+          <mxGeometry x="10" y="310" width="245" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="pve11vmprodd2" value="scsi2 pgwal 10G → /pgwal" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;" vertex="1" parent="pve11vmprod">
+          <mxGeometry x="10" y="338" width="245" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="pve11vmprodd3" value="scsi3 pgaudit 10G → /pg_audit_logs" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;" vertex="1" parent="pve11vmprod">
+          <mxGeometry x="10" y="366" width="245" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="pve11tpl" value="&lt;b&gt;Template 9000 tpl-alma10&lt;/b&gt; · AlmaLinux 10.2 DVD + kickstart (OEMDRV), LVM, cloud-init · full clones → RBD-Disk" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=10;" vertex="1" parent="pve11">
+          <mxGeometry x="12" y="500" width="546" height="46" as="geometry" />
+        </mxCell>
+        <mxCell id="pve12" value="DC-A-PVE-12 · 10.50.200.12" style="swimlane;container=1;collapsible=0;startSize=30;fontStyle=1;fontSize=13;rounded=1;arcSize=1;html=1;whiteSpace=wrap;align=left;spacingLeft=10;fillColor=#ffffff;strokeColor=#666666;fontSize=12;" vertex="1" parent="cl">
+          <mxGeometry x="600" y="40" width="570" height="560" as="geometry" />
+        </mxCell>
+        <mxCell id="pve12br" value="&lt;b&gt;vmbr0&lt;/b&gt; — untagged (net_vlan_tag empty) · VM NICs virtio,bridge=vmbr0" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="pve12">
+          <mxGeometry x="12" y="40" width="546" height="28" as="geometry" />
+        </mxCell>
+        <mxCell id="pve12vmdev" value="pgdb02-dev · VM 243 · 10.50.200.243&lt;br&gt;&lt;span style='font-weight:normal'&gt;AlmaLinux 10 · 2 vCPU x86-64-v3 · 4 GiB&lt;/span&gt;" style="swimlane;container=1;collapsible=0;startSize=30;fontStyle=1;fontSize=13;rounded=1;arcSize=1;html=1;whiteSpace=wrap;align=left;spacingLeft=10;fillColor=#dae8fc;strokeColor=#6c8ebf;startSize=44;fontSize=11;align=center;spacingLeft=0;" vertex="1" parent="pve12">
+          <mxGeometry x="12" y="85" width="265" height="400" as="geometry" />
+        </mxCell>
+        <mxCell id="pve12vmdevs0" value="PostgreSQL 18 :5432" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffffff;strokeColor=#666666;fontSize=10;arcSize=20;" vertex="1" parent="pve12vmdev">
+          <mxGeometry x="10" y="52" width="245" height="22" as="geometry" />
+        </mxCell>
+        <mxCell id="pve12vmdevs1" value="Patroni 4.1.5 :8008" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffffff;strokeColor=#666666;fontSize=10;arcSize=20;" vertex="1" parent="pve12vmdev">
+          <mxGeometry x="10" y="76" width="245" height="22" as="geometry" />
+        </mxCell>
+        <mxCell id="pve12vmdevs2" value="etcd 3.7.2 :2379 / :2380 · :2381" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffffff;strokeColor=#666666;fontSize=10;arcSize=20;" vertex="1" parent="pve12vmdev">
+          <mxGeometry x="10" y="100" width="245" height="22" as="geometry" />
+        </mxCell>
+        <mxCell id="pve12vmdevs3" value="PgBouncer 1.26.0 :6432" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffffff;strokeColor=#666666;fontSize=10;arcSize=20;" vertex="1" parent="pve12vmdev">
+          <mxGeometry x="10" y="124" width="245" height="22" as="geometry" />
+        </mxCell>
+        <mxCell id="pve12vmdevs4" value="HAProxy 3.0.5 :5000 / :5001 / :8404" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffffff;strokeColor=#666666;fontSize=10;arcSize=20;" vertex="1" parent="pve12vmdev">
+          <mxGeometry x="10" y="148" width="245" height="22" as="geometry" />
+        </mxCell>
+        <mxCell id="pve12vmdevs5" value="keepalived 2.2.8 · VRRP prio 90" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffffff;strokeColor=#666666;fontSize=10;arcSize=20;" vertex="1" parent="pve12vmdev">
+          <mxGeometry x="10" y="172" width="245" height="22" as="geometry" />
+        </mxCell>
+        <mxCell id="pve12vmdevs6" value="exporters :9100 / :9187 / :9127" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffffff;strokeColor=#666666;fontSize=10;arcSize=20;" vertex="1" parent="pve12vmdev">
+          <mxGeometry x="10" y="196" width="245" height="22" as="geometry" />
+        </mxCell>
+        <mxCell id="pve12vmdevs7" value="firewalld zone pgc (DROP)" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffffff;strokeColor=#666666;fontSize=10;arcSize=20;" vertex="1" parent="pve12vmdev">
+          <mxGeometry x="10" y="220" width="245" height="22" as="geometry" />
+        </mxCell>
+        <mxCell id="pve12vmdevdl" value="&lt;b&gt;Disks&lt;/b&gt; (SCSI, virtio-scsi-single, iothread, discard)" style="text;html=1;fontSize=10;align=left;" vertex="1" parent="pve12vmdev">
+          <mxGeometry x="10" y="248" width="245" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="pve12vmdevd0" value="scsi0 OS 32G · VG almalinux: / 16G · /var 8G · /home 2G · swap 4G" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;" vertex="1" parent="pve12vmdev">
+          <mxGeometry x="10" y="270" width="245" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="pve12vmdevd1" value="scsi1 pgdata 20G → /var/lib/pgsql" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;" vertex="1" parent="pve12vmdev">
+          <mxGeometry x="10" y="310" width="245" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="pve12vmdevd2" value="scsi2 pgwal 10G → /pgwal" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;" vertex="1" parent="pve12vmdev">
+          <mxGeometry x="10" y="338" width="245" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="pve12vmdevd3" value="scsi3 pgaudit 10G → /pg_audit_logs" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;" vertex="1" parent="pve12vmdev">
+          <mxGeometry x="10" y="366" width="245" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="pve12vmprod" value="pgdb02-prod · VM 247 · 10.50.200.247&lt;br&gt;&lt;span style='font-weight:normal'&gt;AlmaLinux 10 · 2 vCPU x86-64-v3 · 4 GiB&lt;/span&gt;" style="swimlane;container=1;collapsible=0;startSize=30;fontStyle=1;fontSize=13;rounded=1;arcSize=1;html=1;whiteSpace=wrap;align=left;spacingLeft=10;fillColor=#f8cecc;strokeColor=#b85450;startSize=44;fontSize=11;align=center;spacingLeft=0;" vertex="1" parent="pve12">
+          <mxGeometry x="293" y="85" width="265" height="400" as="geometry" />
+        </mxCell>
+        <mxCell id="pve12vmprods0" value="PostgreSQL 18 :5432" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffffff;strokeColor=#666666;fontSize=10;arcSize=20;" vertex="1" parent="pve12vmprod">
+          <mxGeometry x="10" y="52" width="245" height="22" as="geometry" />
+        </mxCell>
+        <mxCell id="pve12vmprods1" value="Patroni 4.1.5 :8008" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffffff;strokeColor=#666666;fontSize=10;arcSize=20;" vertex="1" parent="pve12vmprod">
+          <mxGeometry x="10" y="76" width="245" height="22" as="geometry" />
+        </mxCell>
+        <mxCell id="pve12vmprods2" value="etcd 3.7.2 :2379 / :2380 · :2381" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffffff;strokeColor=#666666;fontSize=10;arcSize=20;" vertex="1" parent="pve12vmprod">
+          <mxGeometry x="10" y="100" width="245" height="22" as="geometry" />
+        </mxCell>
+        <mxCell id="pve12vmprods3" value="PgBouncer 1.26.0 :6432" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffffff;strokeColor=#666666;fontSize=10;arcSize=20;" vertex="1" parent="pve12vmprod">
+          <mxGeometry x="10" y="124" width="245" height="22" as="geometry" />
+        </mxCell>
+        <mxCell id="pve12vmprods4" value="HAProxy 3.0.5 :5000 / :5001 / :8404" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffffff;strokeColor=#666666;fontSize=10;arcSize=20;" vertex="1" parent="pve12vmprod">
+          <mxGeometry x="10" y="148" width="245" height="22" as="geometry" />
+        </mxCell>
+        <mxCell id="pve12vmprods5" value="keepalived 2.2.8 · VRRP prio 90" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffffff;strokeColor=#666666;fontSize=10;arcSize=20;" vertex="1" parent="pve12vmprod">
+          <mxGeometry x="10" y="172" width="245" height="22" as="geometry" />
+        </mxCell>
+        <mxCell id="pve12vmprods6" value="exporters :9100 / :9187 / :9127" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffffff;strokeColor=#666666;fontSize=10;arcSize=20;" vertex="1" parent="pve12vmprod">
+          <mxGeometry x="10" y="196" width="245" height="22" as="geometry" />
+        </mxCell>
+        <mxCell id="pve12vmprods7" value="firewalld zone pgc (DROP)" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffffff;strokeColor=#666666;fontSize=10;arcSize=20;" vertex="1" parent="pve12vmprod">
+          <mxGeometry x="10" y="220" width="245" height="22" as="geometry" />
+        </mxCell>
+        <mxCell id="pve12vmproddl" value="&lt;b&gt;Disks&lt;/b&gt; (SCSI, virtio-scsi-single, iothread, discard)" style="text;html=1;fontSize=10;align=left;" vertex="1" parent="pve12vmprod">
+          <mxGeometry x="10" y="248" width="245" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="pve12vmprodd0" value="scsi0 OS 32G · VG almalinux: / 16G · /var 8G · /home 2G · swap 4G" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;" vertex="1" parent="pve12vmprod">
+          <mxGeometry x="10" y="270" width="245" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="pve12vmprodd1" value="scsi1 pgdata 20G → /var/lib/pgsql" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;" vertex="1" parent="pve12vmprod">
+          <mxGeometry x="10" y="310" width="245" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="pve12vmprodd2" value="scsi2 pgwal 10G → /pgwal" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;" vertex="1" parent="pve12vmprod">
+          <mxGeometry x="10" y="338" width="245" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="pve12vmprodd3" value="scsi3 pgaudit 10G → /pg_audit_logs" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;" vertex="1" parent="pve12vmprod">
+          <mxGeometry x="10" y="366" width="245" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="pve12ha" value="PVE HA: vm:243, vm:247 started · rule pgc-&amp;lt;vm&amp;gt;-home → this node (non-strict, failback) · max_restart 1 / max_relocate 1" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=10;" vertex="1" parent="pve12">
+          <mxGeometry x="12" y="500" width="546" height="46" as="geometry" />
+        </mxCell>
+        <mxCell id="pve13" value="DC-A-PVE-13 · 10.50.200.13" style="swimlane;container=1;collapsible=0;startSize=30;fontStyle=1;fontSize=13;rounded=1;arcSize=1;html=1;whiteSpace=wrap;align=left;spacingLeft=10;fillColor=#ffffff;strokeColor=#666666;fontSize=12;" vertex="1" parent="cl">
+          <mxGeometry x="1185" y="40" width="570" height="560" as="geometry" />
+        </mxCell>
+        <mxCell id="pve13br" value="&lt;b&gt;vmbr0&lt;/b&gt; — untagged (net_vlan_tag empty) · VM NICs virtio,bridge=vmbr0" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="pve13">
+          <mxGeometry x="12" y="40" width="546" height="28" as="geometry" />
+        </mxCell>
+        <mxCell id="pve13vmdev" value="pgdb03-dev · VM 244 · 10.50.200.244&lt;br&gt;&lt;span style='font-weight:normal'&gt;AlmaLinux 10 · 2 vCPU x86-64-v3 · 4 GiB&lt;/span&gt;" style="swimlane;container=1;collapsible=0;startSize=30;fontStyle=1;fontSize=13;rounded=1;arcSize=1;html=1;whiteSpace=wrap;align=left;spacingLeft=10;fillColor=#dae8fc;strokeColor=#6c8ebf;startSize=44;fontSize=11;align=center;spacingLeft=0;" vertex="1" parent="pve13">
+          <mxGeometry x="12" y="85" width="265" height="400" as="geometry" />
+        </mxCell>
+        <mxCell id="pve13vmdevs0" value="PostgreSQL 18 :5432" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffffff;strokeColor=#666666;fontSize=10;arcSize=20;" vertex="1" parent="pve13vmdev">
+          <mxGeometry x="10" y="52" width="245" height="22" as="geometry" />
+        </mxCell>
+        <mxCell id="pve13vmdevs1" value="Patroni 4.1.5 :8008" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffffff;strokeColor=#666666;fontSize=10;arcSize=20;" vertex="1" parent="pve13vmdev">
+          <mxGeometry x="10" y="76" width="245" height="22" as="geometry" />
+        </mxCell>
+        <mxCell id="pve13vmdevs2" value="etcd 3.7.2 :2379 / :2380 · :2381" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffffff;strokeColor=#666666;fontSize=10;arcSize=20;" vertex="1" parent="pve13vmdev">
+          <mxGeometry x="10" y="100" width="245" height="22" as="geometry" />
+        </mxCell>
+        <mxCell id="pve13vmdevs3" value="PgBouncer 1.26.0 :6432" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffffff;strokeColor=#666666;fontSize=10;arcSize=20;" vertex="1" parent="pve13vmdev">
+          <mxGeometry x="10" y="124" width="245" height="22" as="geometry" />
+        </mxCell>
+        <mxCell id="pve13vmdevs4" value="HAProxy 3.0.5 :5000 / :5001 / :8404" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffffff;strokeColor=#666666;fontSize=10;arcSize=20;" vertex="1" parent="pve13vmdev">
+          <mxGeometry x="10" y="148" width="245" height="22" as="geometry" />
+        </mxCell>
+        <mxCell id="pve13vmdevs5" value="keepalived 2.2.8 · VRRP prio 80" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffffff;strokeColor=#666666;fontSize=10;arcSize=20;" vertex="1" parent="pve13vmdev">
+          <mxGeometry x="10" y="172" width="245" height="22" as="geometry" />
+        </mxCell>
+        <mxCell id="pve13vmdevs6" value="exporters :9100 / :9187 / :9127" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffffff;strokeColor=#666666;fontSize=10;arcSize=20;" vertex="1" parent="pve13vmdev">
+          <mxGeometry x="10" y="196" width="245" height="22" as="geometry" />
+        </mxCell>
+        <mxCell id="pve13vmdevs7" value="firewalld zone pgc (DROP)" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffffff;strokeColor=#666666;fontSize=10;arcSize=20;" vertex="1" parent="pve13vmdev">
+          <mxGeometry x="10" y="220" width="245" height="22" as="geometry" />
+        </mxCell>
+        <mxCell id="pve13vmdevdl" value="&lt;b&gt;Disks&lt;/b&gt; (SCSI, virtio-scsi-single, iothread, discard)" style="text;html=1;fontSize=10;align=left;" vertex="1" parent="pve13vmdev">
+          <mxGeometry x="10" y="248" width="245" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="pve13vmdevd0" value="scsi0 OS 32G · VG almalinux: / 16G · /var 8G · /home 2G · swap 4G" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;" vertex="1" parent="pve13vmdev">
+          <mxGeometry x="10" y="270" width="245" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="pve13vmdevd1" value="scsi1 pgdata 20G → /var/lib/pgsql" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;" vertex="1" parent="pve13vmdev">
+          <mxGeometry x="10" y="310" width="245" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="pve13vmdevd2" value="scsi2 pgwal 10G → /pgwal" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;" vertex="1" parent="pve13vmdev">
+          <mxGeometry x="10" y="338" width="245" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="pve13vmdevd3" value="scsi3 pgaudit 10G → /pg_audit_logs" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;" vertex="1" parent="pve13vmdev">
+          <mxGeometry x="10" y="366" width="245" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="pve13vmprod" value="pgdb03-prod · VM 248 · 10.50.200.248&lt;br&gt;&lt;span style='font-weight:normal'&gt;AlmaLinux 10 · 2 vCPU x86-64-v3 · 4 GiB&lt;/span&gt;" style="swimlane;container=1;collapsible=0;startSize=30;fontStyle=1;fontSize=13;rounded=1;arcSize=1;html=1;whiteSpace=wrap;align=left;spacingLeft=10;fillColor=#f8cecc;strokeColor=#b85450;startSize=44;fontSize=11;align=center;spacingLeft=0;" vertex="1" parent="pve13">
+          <mxGeometry x="293" y="85" width="265" height="400" as="geometry" />
+        </mxCell>
+        <mxCell id="pve13vmprods0" value="PostgreSQL 18 :5432" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffffff;strokeColor=#666666;fontSize=10;arcSize=20;" vertex="1" parent="pve13vmprod">
+          <mxGeometry x="10" y="52" width="245" height="22" as="geometry" />
+        </mxCell>
+        <mxCell id="pve13vmprods1" value="Patroni 4.1.5 :8008" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffffff;strokeColor=#666666;fontSize=10;arcSize=20;" vertex="1" parent="pve13vmprod">
+          <mxGeometry x="10" y="76" width="245" height="22" as="geometry" />
+        </mxCell>
+        <mxCell id="pve13vmprods2" value="etcd 3.7.2 :2379 / :2380 · :2381" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffffff;strokeColor=#666666;fontSize=10;arcSize=20;" vertex="1" parent="pve13vmprod">
+          <mxGeometry x="10" y="100" width="245" height="22" as="geometry" />
+        </mxCell>
+        <mxCell id="pve13vmprods3" value="PgBouncer 1.26.0 :6432" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffffff;strokeColor=#666666;fontSize=10;arcSize=20;" vertex="1" parent="pve13vmprod">
+          <mxGeometry x="10" y="124" width="245" height="22" as="geometry" />
+        </mxCell>
+        <mxCell id="pve13vmprods4" value="HAProxy 3.0.5 :5000 / :5001 / :8404" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffffff;strokeColor=#666666;fontSize=10;arcSize=20;" vertex="1" parent="pve13vmprod">
+          <mxGeometry x="10" y="148" width="245" height="22" as="geometry" />
+        </mxCell>
+        <mxCell id="pve13vmprods5" value="keepalived 2.2.8 · VRRP prio 80" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffffff;strokeColor=#666666;fontSize=10;arcSize=20;" vertex="1" parent="pve13vmprod">
+          <mxGeometry x="10" y="172" width="245" height="22" as="geometry" />
+        </mxCell>
+        <mxCell id="pve13vmprods6" value="exporters :9100 / :9187 / :9127" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffffff;strokeColor=#666666;fontSize=10;arcSize=20;" vertex="1" parent="pve13vmprod">
+          <mxGeometry x="10" y="196" width="245" height="22" as="geometry" />
+        </mxCell>
+        <mxCell id="pve13vmprods7" value="firewalld zone pgc (DROP)" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffffff;strokeColor=#666666;fontSize=10;arcSize=20;" vertex="1" parent="pve13vmprod">
+          <mxGeometry x="10" y="220" width="245" height="22" as="geometry" />
+        </mxCell>
+        <mxCell id="pve13vmproddl" value="&lt;b&gt;Disks&lt;/b&gt; (SCSI, virtio-scsi-single, iothread, discard)" style="text;html=1;fontSize=10;align=left;" vertex="1" parent="pve13vmprod">
+          <mxGeometry x="10" y="248" width="245" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="pve13vmprodd0" value="scsi0 OS 32G · VG almalinux: / 16G · /var 8G · /home 2G · swap 4G" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;" vertex="1" parent="pve13vmprod">
+          <mxGeometry x="10" y="270" width="245" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="pve13vmprodd1" value="scsi1 pgdata 20G → /var/lib/pgsql" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;" vertex="1" parent="pve13vmprod">
+          <mxGeometry x="10" y="310" width="245" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="pve13vmprodd2" value="scsi2 pgwal 10G → /pgwal" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;" vertex="1" parent="pve13vmprod">
+          <mxGeometry x="10" y="338" width="245" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="pve13vmprodd3" value="scsi3 pgaudit 10G → /pg_audit_logs" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;" vertex="1" parent="pve13vmprod">
+          <mxGeometry x="10" y="366" width="245" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="pve13ha" value="PVE HA: vm:244, vm:248 started · rule pgc-&amp;lt;vm&amp;gt;-home → this node (non-strict, failback) · max_restart 1 / max_relocate 1" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=10;" vertex="1" parent="pve13">
+          <mxGeometry x="12" y="500" width="546" height="46" as="geometry" />
+        </mxCell>
+        <mxCell id="st" value="Ceph — hyperconverged on DC-A-PVE-11/12/13 (storage IDs as referenced in inventories/*/group_vars/all/proxmox.yml)" style="swimlane;container=1;collapsible=0;startSize=30;fontStyle=1;fontSize=13;rounded=1;arcSize=1;html=1;whiteSpace=wrap;align=left;spacingLeft=10;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="40" y="740" width="1780" height="170" as="geometry" />
+        </mxCell>
+        <mxCell id="rbd" value="&lt;b&gt;Ceph RBD storage 'RBD-Disk'&lt;/b&gt;&lt;br&gt;every VM disk of dev AND prod: scsi0 OS + pgdata + pgwal + pgaudit&lt;br&gt;xfs on LVM inside the guest; disks found by Proxmox serial" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffffff;strokeColor=#666666;" vertex="1" parent="st">
+          <mxGeometry x="20" y="45" width="560" height="105" as="geometry" />
+        </mxCell>
+        <mxCell id="cfs" value="&lt;b&gt;CephFS storage 'cephfs'&lt;/b&gt;&lt;br&gt;/mnt/pve/cephfs/template/iso&lt;br&gt;AlmaLinux-10.2 DVD ISO + kickstart ISO" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffffff;strokeColor=#666666;" vertex="1" parent="st">
+          <mxGeometry x="600" y="45" width="400" height="105" as="geometry" />
+        </mxCell>
+        <mxCell id="pool" value="&lt;b&gt;Proxmox pool 'postgresql-pool'&lt;/b&gt;&lt;br&gt;template 9000 + VMs 242–244, 246–248&lt;br&gt;tags: pgc, &amp;lt;env&amp;gt;" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffffff;strokeColor=#666666;" vertex="1" parent="st">
+          <mxGeometry x="1020" y="45" width="360" height="105" as="geometry" />
+        </mxCell>
+        <mxCell id="cephgap" value="&lt;b&gt;Not in repo:&lt;/b&gt; Ceph public/cluster networks, OSD/device classes, pool size/min_size, bonds, vmbr1+, SDN/VLANs. Confirm before using this page as an audit diagram." style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffffff;strokeColor=#b85450;dashed=1;fontColor=#b85450;" vertex="1" parent="st">
+          <mxGeometry x="1400" y="45" width="360" height="105" as="geometry" />
+        </mxCell>
+        <mxCell id="rbd_pve11" value="librbd" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;html=1;endArrow=block;endFill=1;fontSize=10;labelBackgroundColor=#ffffff;jumpStyle=arc;jumpSize=10;strokeColor=#82b366;strokeWidth=2;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="pve11" target="rbd">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="rbd_pve12" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;html=1;endArrow=block;endFill=1;fontSize=10;labelBackgroundColor=#ffffff;jumpStyle=arc;jumpSize=10;strokeColor=#82b366;strokeWidth=2;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.6964285714285714;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="pve12" target="rbd">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="925.0" y="712" />
+              <mxPoint x="450" y="712" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="rbd_pve13" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;html=1;endArrow=block;endFill=1;fontSize=10;labelBackgroundColor=#ffffff;jumpStyle=arc;jumpSize=10;strokeColor=#82b366;strokeWidth=2;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.875;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="pve13" target="rbd">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1510.0" y="726" />
+              <mxPoint x="550" y="726" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="ws" value="&lt;b&gt;Ansible workstation&lt;/b&gt; (admin net 10.119.10.0/24)&lt;br&gt;• provision --tags template → SSH root@DC-A-PVE-11&lt;br&gt;• provision --tags vms → PVE API (token)&lt;br&gt;• site.yml → SSH ansible@pgdb*-&amp;lt;env&amp;gt;" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffffff;strokeColor=#666666;align=left;spacing=8;" vertex="1" parent="1">
+          <mxGeometry x="1860" y="100" width="280" height="150" as="geometry" />
+        </mxCell>
+        <mxCell id="prom2" value="&lt;b&gt;Prometheus 10.45.66.120&lt;/b&gt;&lt;br&gt;scrapes every VM (firewall allows only this IP)" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="1860" y="320" width="280" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="ws_api" value="8006 / 22" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;html=1;endArrow=block;endFill=1;fontSize=10;labelBackgroundColor=#ffffff;jumpStyle=arc;jumpSize=10;strokeColor=#333333;strokeWidth=1.5;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.1693548387096774;entryDx=0;entryDy=0;" edge="1" parent="1" source="ws" target="cl">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="prom_cl" value="scrape" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;html=1;endArrow=block;endFill=1;fontSize=10;labelBackgroundColor=#ffffff;jumpStyle=arc;jumpSize=10;strokeColor=#82b366;strokeWidth=1.5;dashed=1;fontColor=#4d7a3a;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.47580645161290325;entryDx=0;entryDy=0;" edge="1" parent="1" source="prom2" target="cl">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="pp" value="PostgreSQL HA data path — one environment shown (prod values; dev in [brackets]). Leader / standby roles move: any node can hold them." style="swimlane;container=1;collapsible=0;startSize=30;fontStyle=1;fontSize=13;rounded=1;arcSize=1;html=1;whiteSpace=wrap;align=left;spacingLeft=10;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="1">
+          <mxGeometry x="40" y="950" width="2100" height="580" as="geometry" />
+        </mxCell>
+        <mxCell id="cli" value="&lt;b&gt;Clients&lt;/b&gt;&lt;br&gt;admin_cidrs (+ app_cidrs)" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffffff;strokeColor=#666666;" vertex="1" parent="pp">
+          <mxGeometry x="20" y="170" width="150" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="vip" value="&lt;b&gt;VIP 10.50.200.249&lt;/b&gt;&lt;br&gt;[.245]&lt;br&gt;held by one node" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="pp">
+          <mxGeometry x="200" y="170" width="170" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="hap" value="HAProxy (VIP holder)" style="swimlane;container=1;collapsible=0;startSize=30;fontStyle=1;fontSize=13;rounded=1;arcSize=1;html=1;whiteSpace=wrap;align=left;spacingLeft=10;fillColor=#ffffff;strokeColor=#666666;fontSize=12;" vertex="1" parent="pp">
+          <mxGeometry x="410" y="100" width="260" height="300" as="geometry" />
+        </mxCell>
+        <mxCell id="lp" value="&lt;b&gt;listen primary :5000&lt;/b&gt;&lt;br&gt;httpchk GET /primary → 200" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffffff;strokeColor=#b85450;strokeWidth=2;" vertex="1" parent="hap">
+          <mxGeometry x="15" y="40" width="230" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="lr" value="&lt;b&gt;listen replicas :5001&lt;/b&gt;&lt;br&gt;roundrobin · GET /replica?lag=16MB" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffffff;strokeColor=#3b6db3;strokeWidth=2;" vertex="1" parent="hap">
+          <mxGeometry x="15" y="120" width="230" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="hapn" value="Checks Patroni :8008 on every node every 3 s (fall 3 / rise 2); a node that loses its role gets its sessions shut down. maxconn 4000, timeouts 30 min." style="text;html=1;whiteSpace=wrap;fontSize=10;align=left;verticalAlign=top;" vertex="1" parent="hap">
+          <mxGeometry x="15" y="195" width="230" height="95" as="geometry" />
+        </mxCell>
+        <mxCell id="kan" value="&lt;b&gt;keepalived:&lt;/b&gt; unicast VRRP between the 3 env nodes, all BACKUP + nopreempt, priority 100/90/80. chk_haproxy curls 127.0.0.1:8404/health every 2 s; on failure the VIP moves and does not move back.&lt;br&gt;&lt;br&gt;&lt;b&gt;Patroni:&lt;/b&gt; leader key in etcd (TTL 30 s). Leader loss → healthiest replica promoted (prod: only the Sync Standby); old leader rejoins via pg_rewind. etcd down to 1 member → leader demotes itself (read-only)." style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#fff2cc;strokeColor=#d6b656;align=left;verticalAlign=top;spacing=8;fontSize=10;" vertex="1" parent="pp">
+          <mxGeometry x="20" y="280" width="360" height="180" as="geometry" />
+        </mxCell>
+        <mxCell id="nL" value="pgdb02 · .247 [.243] — Sync Standby (prod) / Replica (dev)" style="swimlane;container=1;collapsible=0;startSize=30;fontStyle=1;fontSize=13;rounded=1;arcSize=1;html=1;whiteSpace=wrap;align=left;spacingLeft=10;fillColor=#ffffff;strokeColor=#666666;fontSize=11;" vertex="1" parent="pp">
+          <mxGeometry x="720" y="80" width="430" height="450" as="geometry" />
+        </mxCell>
+        <mxCell id="nLpgb" value="&lt;b&gt;PgBouncer :6432&lt;/b&gt; · transaction · listen node IP + 127.0.0.1" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffffff;strokeColor=#666666;" vertex="1" parent="nL">
+          <mxGeometry x="15" y="40" width="400" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="nLpg" value="&lt;b&gt;PostgreSQL 18 :5432 — Sync Standby [async replica]&lt;/b&gt;&lt;br&gt;max_connections 200 · shared_buffers 1 GB · pgaudit ddl,role" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="nL">
+          <mxGeometry x="15" y="120" width="400" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="nLetcd" value="&lt;b&gt;etcd member&lt;/b&gt; · :2379 client · :2380 peer (mTLS, per-env CA) · data /var/lib/etcd/data" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="nL">
+          <mxGeometry x="15" y="210" width="400" height="45" as="geometry" />
+        </mxCell>
+        <mxCell id="nLpat" value="&lt;b&gt;Patroni :8008&lt;/b&gt;&lt;br&gt;/primary /replica /metrics" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffffff;strokeColor=#666666;" vertex="1" parent="nL">
+          <mxGeometry x="15" y="285" width="190" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="nLwd" value="&lt;b&gt;softdog watchdog&lt;/b&gt;&lt;br&gt;prod required [dev automatic]" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffffff;strokeColor=#666666;" vertex="1" parent="nL">
+          <mxGeometry x="225" y="285" width="190" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="nLdsk" value="scsi1 /var/lib/pgsql → PGDATA /var/lib/pgsql/18/data&lt;br&gt;scsi2 /pgwal → /pgwal/18/pg_wal (initdb + basebackup --waldir)&lt;br&gt;scsi3 /pg_audit_logs → server log + pgaudit&lt;br&gt;all three: Ceph RBD-Disk" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;" vertex="1" parent="nL">
+          <mxGeometry x="15" y="360" width="400" height="75" as="geometry" />
+        </mxCell>
+        <mxCell id="nL_pp" value="127.0.0.1:5432" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;html=1;endArrow=block;endFill=1;fontSize=10;labelBackgroundColor=#ffffff;jumpStyle=arc;jumpSize=10;strokeColor=#333333;strokeWidth=1.5;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="nLpgb" target="nLpg">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="nL_pe" value="2379" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;html=1;endArrow=block;endFill=1;fontSize=10;labelBackgroundColor=#ffffff;jumpStyle=arc;jumpSize=10;strokeColor=#d79b00;strokeWidth=1.5;dashed=1;dashPattern=1 3;endArrow=none;startArrow=none;fontColor=#9a6b00;endArrow=block;endFill=1;exitX=0.5;exitY=0;exitDx=0;exitDy=0;entryX=0.24;entryY=1;entryDx=0;entryDy=0;" edge="1" parent="1" source="nLpat" target="nLetcd">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="nM" value="pgdb01 · .246 [.242] — Leader (example placement)" style="swimlane;container=1;collapsible=0;startSize=30;fontStyle=1;fontSize=13;rounded=1;arcSize=1;html=1;whiteSpace=wrap;align=left;spacingLeft=10;fillColor=#ffffff;strokeColor=#666666;fontSize=11;" vertex="1" parent="pp">
+          <mxGeometry x="1180" y="80" width="430" height="450" as="geometry" />
+        </mxCell>
+        <mxCell id="nMpgb" value="&lt;b&gt;PgBouncer :6432&lt;/b&gt; · transaction · listen node IP + 127.0.0.1" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffffff;strokeColor=#666666;" vertex="1" parent="nM">
+          <mxGeometry x="15" y="40" width="400" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="nMpg" value="&lt;b&gt;PostgreSQL 18 :5432 — LEADER — read-write&lt;/b&gt;&lt;br&gt;max_connections 200 · shared_buffers 1 GB · pgaudit ddl,role" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#e1d5e7;strokeColor=#9673a6;strokeColor=#b85450;strokeWidth=2;" vertex="1" parent="nM">
+          <mxGeometry x="15" y="120" width="400" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="nMetcd" value="&lt;b&gt;etcd member&lt;/b&gt; · :2379 client · :2380 peer (mTLS, per-env CA) · data /var/lib/etcd/data" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="nM">
+          <mxGeometry x="15" y="210" width="400" height="45" as="geometry" />
+        </mxCell>
+        <mxCell id="nMpat" value="&lt;b&gt;Patroni :8008&lt;/b&gt;&lt;br&gt;/primary /replica /metrics" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffffff;strokeColor=#666666;" vertex="1" parent="nM">
+          <mxGeometry x="15" y="285" width="190" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="nMwd" value="&lt;b&gt;softdog watchdog&lt;/b&gt;&lt;br&gt;prod required [dev automatic]" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffffff;strokeColor=#666666;" vertex="1" parent="nM">
+          <mxGeometry x="225" y="285" width="190" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="nMdsk" value="scsi1 /var/lib/pgsql → PGDATA /var/lib/pgsql/18/data&lt;br&gt;scsi2 /pgwal → /pgwal/18/pg_wal (initdb + basebackup --waldir)&lt;br&gt;scsi3 /pg_audit_logs → server log + pgaudit&lt;br&gt;all three: Ceph RBD-Disk" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;" vertex="1" parent="nM">
+          <mxGeometry x="15" y="360" width="400" height="75" as="geometry" />
+        </mxCell>
+        <mxCell id="nM_pp" value="127.0.0.1:5432" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;html=1;endArrow=block;endFill=1;fontSize=10;labelBackgroundColor=#ffffff;jumpStyle=arc;jumpSize=10;strokeColor=#333333;strokeWidth=1.5;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="nMpgb" target="nMpg">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="nM_pe" value="2379" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;html=1;endArrow=block;endFill=1;fontSize=10;labelBackgroundColor=#ffffff;jumpStyle=arc;jumpSize=10;strokeColor=#d79b00;strokeWidth=1.5;dashed=1;dashPattern=1 3;endArrow=none;startArrow=none;fontColor=#9a6b00;endArrow=block;endFill=1;exitX=0.5;exitY=0;exitDx=0;exitDy=0;entryX=0.24;entryY=1;entryDx=0;entryDy=0;" edge="1" parent="1" source="nMpat" target="nMetcd">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="nR" value="pgdb03 · .248 [.244] — Replica" style="swimlane;container=1;collapsible=0;startSize=30;fontStyle=1;fontSize=13;rounded=1;arcSize=1;html=1;whiteSpace=wrap;align=left;spacingLeft=10;fillColor=#ffffff;strokeColor=#666666;fontSize=11;" vertex="1" parent="pp">
+          <mxGeometry x="1640" y="80" width="430" height="450" as="geometry" />
+        </mxCell>
+        <mxCell id="nRpgb" value="&lt;b&gt;PgBouncer :6432&lt;/b&gt; · transaction · listen node IP + 127.0.0.1" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffffff;strokeColor=#666666;" vertex="1" parent="nR">
+          <mxGeometry x="15" y="40" width="400" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="nRpg" value="&lt;b&gt;PostgreSQL 18 :5432 — Replica — read-only&lt;/b&gt;&lt;br&gt;max_connections 200 · shared_buffers 1 GB · pgaudit ddl,role" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="nR">
+          <mxGeometry x="15" y="120" width="400" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="nRetcd" value="&lt;b&gt;etcd member&lt;/b&gt; · :2379 client · :2380 peer (mTLS, per-env CA) · data /var/lib/etcd/data" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="nR">
+          <mxGeometry x="15" y="210" width="400" height="45" as="geometry" />
+        </mxCell>
+        <mxCell id="nRpat" value="&lt;b&gt;Patroni :8008&lt;/b&gt;&lt;br&gt;/primary /replica /metrics" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffffff;strokeColor=#666666;" vertex="1" parent="nR">
+          <mxGeometry x="15" y="285" width="190" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="nRwd" value="&lt;b&gt;softdog watchdog&lt;/b&gt;&lt;br&gt;prod required [dev automatic]" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffffff;strokeColor=#666666;" vertex="1" parent="nR">
+          <mxGeometry x="225" y="285" width="190" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="nRdsk" value="scsi1 /var/lib/pgsql → PGDATA /var/lib/pgsql/18/data&lt;br&gt;scsi2 /pgwal → /pgwal/18/pg_wal (initdb + basebackup --waldir)&lt;br&gt;scsi3 /pg_audit_logs → server log + pgaudit&lt;br&gt;all three: Ceph RBD-Disk" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fontSize=11;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;" vertex="1" parent="nR">
+          <mxGeometry x="15" y="360" width="400" height="75" as="geometry" />
+        </mxCell>
+        <mxCell id="nR_pp" value="127.0.0.1:5432" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;html=1;endArrow=block;endFill=1;fontSize=10;labelBackgroundColor=#ffffff;jumpStyle=arc;jumpSize=10;strokeColor=#333333;strokeWidth=1.5;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="nRpgb" target="nRpg">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="nR_pe" value="2379" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;html=1;endArrow=block;endFill=1;fontSize=10;labelBackgroundColor=#ffffff;jumpStyle=arc;jumpSize=10;strokeColor=#d79b00;strokeWidth=1.5;dashed=1;dashPattern=1 3;endArrow=none;startArrow=none;fontColor=#9a6b00;endArrow=block;endFill=1;exitX=0.5;exitY=0;exitDx=0;exitDy=0;entryX=0.24;entryY=1;entryDx=0;entryDy=0;" edge="1" parent="1" source="nRpat" target="nRetcd">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="d1" value="5000 / 5001" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;html=1;endArrow=block;endFill=1;fontSize=10;labelBackgroundColor=#ffffff;jumpStyle=arc;jumpSize=10;strokeColor=#333333;strokeWidth=1.5;" edge="1" parent="1" source="cli" target="vip">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="d2" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;html=1;endArrow=block;endFill=1;fontSize=10;labelBackgroundColor=#ffffff;jumpStyle=arc;jumpSize=10;strokeColor=#333333;strokeWidth=1.5;entryX=0;entryY=0.36666666666666664;entryDx=0;entryDy=0;" edge="1" parent="1" source="vip" target="hap">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="rw" value="RW → 6432 on leader" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;html=1;endArrow=block;endFill=1;fontSize=10;labelBackgroundColor=#ffffff;jumpStyle=arc;jumpSize=10;strokeColor=#b85450;strokeWidth=2;fontColor=#b85450;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0.175;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="lp" target="nMpgb">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="730" y="1120" />
+              <mxPoint x="730" y="1005" />
+              <mxPoint x="1305" y="1005" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="ro_r" value="RO → 6432" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;html=1;endArrow=block;endFill=1;fontSize=10;labelBackgroundColor=#ffffff;jumpStyle=arc;jumpSize=10;strokeColor=#3b6db3;strokeWidth=2;dashed=1;fontColor=#3b6db3;exitX=1;exitY=0.3333333333333333;exitDx=0;exitDy=0;entryX=0.2;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="lr" target="nRpgb">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="720" y="1190" />
+              <mxPoint x="720" y="990" />
+              <mxPoint x="1775" y="990" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="ro_l" value="RO → 6432" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;html=1;endArrow=block;endFill=1;fontSize=10;labelBackgroundColor=#ffffff;jumpStyle=arc;jumpSize=10;strokeColor=#3b6db3;strokeWidth=2;dashed=1;fontColor=#3b6db3;exitX=1;exitY=0.75;exitDx=0;exitDy=0;entryX=0;entryY=0.7;entryDx=0;entryDy=0;" edge="1" parent="1" source="lr" target="nLpgb">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="745" y="1215" />
+              <mxPoint x="745" y="1105" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="wal_l" value="WAL :5432 sync" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;html=1;endArrow=block;endFill=1;fontSize=10;labelBackgroundColor=#ffffff;jumpStyle=arc;jumpSize=10;strokeColor=#9673a6;strokeWidth=2;fontColor=#6b4b80;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="nMpg" target="nLpg">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="wal_r" value="WAL :5432 async" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;html=1;endArrow=block;endFill=1;fontSize=10;labelBackgroundColor=#ffffff;jumpStyle=arc;jumpSize=10;strokeColor=#9673a6;strokeWidth=2;fontColor=#6b4b80;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="nMpg" target="nRpg">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="raft1" value="2380" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;html=1;endArrow=block;endFill=1;fontSize=10;labelBackgroundColor=#ffffff;jumpStyle=arc;jumpSize=10;strokeColor=#d79b00;strokeWidth=1.5;dashed=1;dashPattern=1 3;endArrow=none;startArrow=none;fontColor=#9a6b00;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="nLetcd" target="nMetcd">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="raft2" value="2380" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;html=1;endArrow=block;endFill=1;fontSize=10;labelBackgroundColor=#ffffff;jumpStyle=arc;jumpSize=10;strokeColor=#d79b00;strokeWidth=1.5;dashed=1;dashPattern=1 3;endArrow=none;startArrow=none;fontColor=#9a6b00;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="nMetcd" target="nRetcd">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="raft3" value="2380 raft (quorum 2/3)" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;html=1;endArrow=block;endFill=1;fontSize=10;labelBackgroundColor=#ffffff;jumpStyle=arc;jumpSize=10;strokeColor=#d79b00;strokeWidth=1.5;dashed=1;dashPattern=1 3;endArrow=none;startArrow=none;fontColor=#9a6b00;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="nLetcd" target="nRetcd">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="750" y="1262" />
+              <mxPoint x="750" y="1505" />
+              <mxPoint x="2125" y="1505" />
+              <mxPoint x="2125" y="1262" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="p2legend" value="&lt;div style='text-align:left'&gt;&lt;b style='font-size:13px'&gt;Ports &amp;amp; protocols (from role defaults / firewall role)&lt;/b&gt;&lt;table style='font-size:11px;border-collapse:collapse;margin-top:4px'&gt;&lt;tr&gt;&lt;th align='left'&gt;Port&lt;/th&gt;&lt;th align='left'&gt;Proto&lt;/th&gt;&lt;th align='left'&gt;Path&lt;/th&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td style='padding:2px 6px;border-bottom:1px solid #ccc'&gt;&lt;b&gt;443 / 8006&lt;/b&gt;&lt;/td&gt;&lt;td style='padding:2px 6px;border-bottom:1px solid #ccc'&gt;HTTPS&lt;/td&gt;&lt;td style='padding:2px 6px;border-bottom:1px solid #ccc'&gt;Workstation → Proxmox VE API 10.50.200.11 (API token; provision --tags vms)&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td style='padding:2px 6px;border-bottom:1px solid #ccc'&gt;&lt;b&gt;22&lt;/b&gt;&lt;/td&gt;&lt;td style='padding:2px 6px;border-bottom:1px solid #ccc'&gt;SSH&lt;/td&gt;&lt;td style='padding:2px 6px;border-bottom:1px solid #ccc'&gt;Admin net → PVE-11 (root, template build) and pgdb* (user ansible, key-only)&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td style='padding:2px 6px;border-bottom:1px solid #ccc'&gt;&lt;b&gt;5000&lt;/b&gt;&lt;/td&gt;&lt;td style='padding:2px 6px;border-bottom:1px solid #ccc'&gt;TCP&lt;/td&gt;&lt;td style='padding:2px 6px;border-bottom:1px solid #ccc'&gt;Clients → VIP → HAProxy 'primary' (read-write) → PgBouncer :6432 on the leader&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td style='padding:2px 6px;border-bottom:1px solid #ccc'&gt;&lt;b&gt;5001&lt;/b&gt;&lt;/td&gt;&lt;td style='padding:2px 6px;border-bottom:1px solid #ccc'&gt;TCP&lt;/td&gt;&lt;td style='padding:2px 6px;border-bottom:1px solid #ccc'&gt;Clients → VIP → HAProxy 'replicas' (read-only, roundrobin, lag ≤ 16MB) → PgBouncer :6432&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td style='padding:2px 6px;border-bottom:1px solid #ccc'&gt;&lt;b&gt;6432&lt;/b&gt;&lt;/td&gt;&lt;td style='padding:2px 6px;border-bottom:1px solid #ccc'&gt;TCP&lt;/td&gt;&lt;td style='padding:2px 6px;border-bottom:1px solid #ccc'&gt;PgBouncer (transaction pooling); HAProxy backends + direct admin/app access&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td style='padding:2px 6px;border-bottom:1px solid #ccc'&gt;&lt;b&gt;5432&lt;/b&gt;&lt;/td&gt;&lt;td style='padding:2px 6px;border-bottom:1px solid #ccc'&gt;TCP&lt;/td&gt;&lt;td style='padding:2px 6px;border-bottom:1px solid #ccc'&gt;PostgreSQL 18: PgBouncer → 127.0.0.1, WAL streaming (replicator, slots), pg_rewind&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td style='padding:2px 6px;border-bottom:1px solid #ccc'&gt;&lt;b&gt;8008&lt;/b&gt;&lt;/td&gt;&lt;td style='padding:2px 6px;border-bottom:1px solid #ccc'&gt;HTTP&lt;/td&gt;&lt;td style='padding:2px 6px;border-bottom:1px solid #ccc'&gt;Patroni REST: HAProxy health checks /primary /replica, peers, Prometheus /metrics&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td style='padding:2px 6px;border-bottom:1px solid #ccc'&gt;&lt;b&gt;2379&lt;/b&gt;&lt;/td&gt;&lt;td style='padding:2px 6px;border-bottom:1px solid #ccc'&gt;HTTPS mTLS&lt;/td&gt;&lt;td style='padding:2px 6px;border-bottom:1px solid #ccc'&gt;etcd client: Patroni → etcd (per-env CA)&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td style='padding:2px 6px;border-bottom:1px solid #ccc'&gt;&lt;b&gt;2380&lt;/b&gt;&lt;/td&gt;&lt;td style='padding:2px 6px;border-bottom:1px solid #ccc'&gt;HTTPS mTLS&lt;/td&gt;&lt;td style='padding:2px 6px;border-bottom:1px solid #ccc'&gt;etcd peer: raft between the 3 members (quorum 2/3)&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td style='padding:2px 6px;border-bottom:1px solid #ccc'&gt;&lt;b&gt;2381&lt;/b&gt;&lt;/td&gt;&lt;td style='padding:2px 6px;border-bottom:1px solid #ccc'&gt;HTTP&lt;/td&gt;&lt;td style='padding:2px 6px;border-bottom:1px solid #ccc'&gt;etcd /metrics (Prometheus only)&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td style='padding:2px 6px;border-bottom:1px solid #ccc'&gt;&lt;b&gt;8404&lt;/b&gt;&lt;/td&gt;&lt;td style='padding:2px 6px;border-bottom:1px solid #ccc'&gt;HTTP&lt;/td&gt;&lt;td style='padding:2px 6px;border-bottom:1px solid #ccc'&gt;HAProxy stats /stats, /health (keepalived check), /metrics&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td style='padding:2px 6px;border-bottom:1px solid #ccc'&gt;&lt;b&gt;VRRP (112)&lt;/b&gt;&lt;/td&gt;&lt;td style='padding:2px 6px;border-bottom:1px solid #ccc'&gt;IP proto&lt;/td&gt;&lt;td style='padding:2px 6px;border-bottom:1px solid #ccc'&gt;keepalived unicast between env nodes; VRID dev 242 / prod 246&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td style='padding:2px 6px;border-bottom:1px solid #ccc'&gt;&lt;b&gt;9100 / 9187 / 9127&lt;/b&gt;&lt;/td&gt;&lt;td style='padding:2px 6px;border-bottom:1px solid #ccc'&gt;HTTP&lt;/td&gt;&lt;td style='padding:2px 6px;border-bottom:1px solid #ccc'&gt;node_exporter / postgres_exporter / pgbouncer_exporter → Prometheus 10.45.66.120&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;&lt;div style='margin-top:6px;font-size:11px'&gt;&lt;span style='color:#b85450'&gt;&lt;b&gt;━━&lt;/b&gt; read-write&lt;/span&gt; &amp;nbsp; &lt;span style='color:#3b6db3'&gt;&lt;b&gt;╍╍&lt;/b&gt; read-only&lt;/span&gt; &amp;nbsp; &lt;span style='color:#9673a6'&gt;&lt;b&gt;━━&lt;/b&gt; WAL streaming&lt;/span&gt; &amp;nbsp; &lt;span style='color:#d79b00'&gt;&lt;b&gt;┈┈&lt;/b&gt; etcd raft / DCS&lt;/span&gt; &amp;nbsp; &lt;span style='color:#82b366'&gt;&lt;b&gt;╍╍&lt;/b&gt; monitoring scrape&lt;/span&gt; &amp;nbsp; &lt;span style='color:#b85450'&gt;dashed red box = gap / not in repo&lt;/span&gt;&lt;/div&gt;&lt;/div&gt;" style="rounded=1;arcSize=2;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=10;fillColor=#ffffff;strokeColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="40" y="1580" width="900" height="310" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

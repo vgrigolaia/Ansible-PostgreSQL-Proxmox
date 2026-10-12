@@ -192,7 +192,7 @@ The full checklist, with commands to verify each item, is in section 1 of [DEPLO
 
 ```
 ansible.cfg                     # no default inventory (every run names its env); roles/collections paths
-Makefile                        # deps, lint, vault-check, vault-edit, inventory, syntax, credentials
+Makefile                        # deps, lint, vault-check, vault-init, vault-edit, inventory, syntax, credentials, docs
 requirements.txt                # Python packages for the workstation venv
 requirements.yml                # Ansible collections (installed into ./collections)
 DEPLOYMENT.md                   # index: which guide to use, how they are generated
@@ -232,6 +232,7 @@ docs/
   prometheus/<cluster>.yml      # generated Prometheus scrape config per env
   templates/DEPLOYMENT.md.j2    # source of DEPLOYMENT-<env>.md
 scripts/render_deployment.py    # renders the deployment guides (make docs / make docs-check)
+scripts/vault-init.sh           # creates an environment's vault with generated passwords (make vault-init)
 ```
 
 | Tag in `site.yml` | Roles |

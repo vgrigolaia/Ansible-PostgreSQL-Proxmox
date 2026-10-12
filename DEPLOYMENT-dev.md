@@ -33,9 +33,8 @@ git checkout dev && git pull --ff-only        # dev is deployed from branch dev
 source .venv/bin/activate                        # after `make deps` (section 2)
 export INV="-i inventories/$ENV" VAULT="--vault-id $ENV@$HOME/.ansible/vault/pgc-$ENV"
 
-# once per environment: vault with generated secrets                                     (section 5)
-# then the offline checks                                                                (section 6)
-make lint && make syntax ENV=$ENV && ansible-playbook $INV $VAULT playbooks/preflight.yml
+make vault-init ENV=$ENV                         # once per environment: vault + generated secrets (section 5)
+make lint && make syntax ENV=$ENV && ansible-playbook $INV $VAULT playbooks/preflight.yml   # offline checks (section 6)
 
 ansible-playbook $INV $VAULT playbooks/provision.yml --tags template --check --diff  # once per Proxmox cluster (7.1)
 ansible-playbook $INV $VAULT playbooks/provision.yml --tags vms      --check --diff  # VMs + HA (7.2)
@@ -394,35 +393,16 @@ Each environment has one encrypted vault file and one vault password file.
 
 **Neither file is ever committed.** The repository is public, so even the encrypted vault and the etcd CA key stay on the workstation (`.gitignore` excludes them). Back up `inventories/dev/group_vars/all/vault.yml`, `inventories/dev/pki/` and the vault password file yourself, e.g. in a password manager: without them you can't manage a deployed cluster.
 
-**New environment:** create the password file and the vault. The script below generates every password without printing it. The plaintext only ever sits in a `0600` temporary file under `~/.ansible/vault` (`0700`) and is encrypted before it is moved into the inventory.
+**Create both, once.** `make vault-init` asks for the Proxmox API token id and secret from section 4 (the secret isn't shown while you type), generates every other password, creates the vault password file and writes the encrypted vault. It never overwrites an existing vault. The plaintext only ever sits in a `0600` temporary file under `~/.ansible/vault` (`0700`) and is encrypted before it is moved into the inventory.
 
-Run on: **workstation**
+Run on: **workstation**, in the repository root
 ```bash
-export ENV=dev
-PVE_TOKEN_ID='ansible@pve!ansible-auth'     # your full token id from section 4: <user>@<realm>!<token>
-mkdir -p ~/.ansible/vault && chmod 700 ~/.ansible/vault
-(umask 077; openssl rand -base64 32 > ~/.ansible/vault/pgc-$ENV)   # store this file in your password manager
-
-gen() { openssl rand -base64 64 | tr -dc 'A-Za-z0-9' | head -c "$1"; }
-tmp=$(mktemp ~/.ansible/vault/new-vault.XXXXXX)
-cat > "$tmp" <<EOF
-vault_pve_api_token_id: "$PVE_TOKEN_ID"
-vault_pve_api_token_secret: "REPLACE-ME"
-vault_vm_ci_password: "$(gen 24)"
-vault_postgres_superuser_password: "$(gen 32)"
-vault_replication_password: "$(gen 32)"
-vault_rewind_password: "$(gen 32)"
-vault_patroni_restapi_password: "$(gen 32)"
-vault_pgbouncer_auth_password: "$(gen 32)"
-vault_monitoring_password: "$(gen 32)"
-vault_keepalived_auth_pass: "$(gen 8)"
-EOF
-ansible-vault encrypt --vault-id $ENV@$HOME/.ansible/vault/pgc-$ENV "$tmp"
-mv "$tmp" inventories/$ENV/group_vars/all/vault.yml
-
-make vault-edit ENV=$ENV           # replace REPLACE-ME with the API token secret from section 4, save
+make vault-init ENV=dev        # token id, e.g. ansible@pve!ansible-auth; then the token secret
 make vault-check                   # expect: vault files encrypted
 ```
+Then back up `~/.ansible/vault/pgc-dev` and `inventories/dev/group_vars/all/vault.yml`, e.g. in your password manager.
+
+To change a value later (a new token secret, for example): `make vault-edit ENV=dev`.
 
 | Key | Used by | Rules |
 |---|---|---|
@@ -788,6 +768,7 @@ ansible-playbook $INV $VAULT playbooks/site.yml --tags baseline,patroni,pgbounce
 
 | Symptom | Cause | Fix |
 |---|---|---|
+| `The vault password file ~/.ansible/vault/pgc-dev was not found` | The environment's vault hasn't been created yet | `make vault-init ENV=dev` (section 5) |
 | `Attempting to decrypt but no vault secrets found` | `$VAULT` missing | Add `--vault-id dev@~/.ansible/vault/pgc-dev` |
 | `Decryption failed` | Wrong vault password file for this env | Get the right one from the password manager |
 | Preflight: `... does not match pgc_environments.dev` | `hosts.yml`, `host_vars` and `environments.yml` disagree | Make all three match |

@@ -1,4 +1,4 @@
-# ansible-postgres-proxmox
+# Ansible-PostgreSQL-Proxmox
 
 Ansible project that builds highly available PostgreSQL clusters on Proxmox VE: from an empty Proxmox cluster to a validated 3-node Patroni cluster behind a virtual IP, with monitoring, in one repository.
 

@@ -5,7 +5,7 @@ BIN := $(VENV)/bin
 INV := inventories/$(ENV)
 VAULT_ID := $(ENV)@$(HOME)/.ansible/vault/pgc-$(ENV)
 
-.PHONY: deps lint vault-check vault-edit inventory syntax credentials docs docs-check
+.PHONY: deps lint vault-check vault-init vault-edit inventory syntax credentials docs docs-check
 
 deps:
 	python3 -m venv $(VENV)
@@ -21,6 +21,11 @@ vault-check:
 	@for f in $$(find inventories -name vault.yml -o -path '*/pki/*.key'); do \
 		head -c 14 $$f | grep -q '^$$ANSIBLE_VAULT' || { echo "NOT ENCRYPTED: $$f"; exit 1; }; done; \
 	echo "vault files encrypted"
+
+# New environment: vault password file + encrypted vault with generated passwords; asks for the API token.
+vault-init:
+	@echo ">> host: workstation, env: $(ENV)"
+	@scripts/vault-init.sh $(ENV)
 
 vault-edit:
 	@echo ">> host: workstation, env: $(ENV)"

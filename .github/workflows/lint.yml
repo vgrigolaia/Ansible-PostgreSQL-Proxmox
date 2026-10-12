@@ -22,6 +22,8 @@ jobs:
         run: make deps
       - name: yamllint + ansible-lint
         run: make lint
+      - name: Deployment guides match template and configuration
+        run: make docs-check
       - name: Syntax check (dev, prod)
         run: |
           make syntax ENV=dev

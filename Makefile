@@ -5,7 +5,7 @@ BIN := $(VENV)/bin
 INV := inventories/$(ENV)
 VAULT_ID := $(ENV)@$(HOME)/.ansible/vault/pgc-$(ENV)
 
-.PHONY: deps lint vault-check vault-edit inventory syntax credentials
+.PHONY: deps lint vault-check vault-edit inventory syntax credentials docs docs-check
 
 deps:
 	python3 -m venv $(VENV)
@@ -43,3 +43,10 @@ credentials:
 	@echo ">> host: workstation, env: $(ENV). Output contains passwords."
 	@$(BIN)/ansible-playbook -i $(INV) --vault-id $(VAULT_ID) playbooks/credentials.yml >/dev/null
 	@cat $(HOME)/.ansible/vault/pgc-$(ENV)-credentials.txt
+
+# Deployment guides DEPLOYMENT-<env>.md, generated from docs/templates/DEPLOYMENT.md.j2 and the configuration.
+docs:
+	$(BIN)/python scripts/render_deployment.py
+
+docs-check:
+	$(BIN)/python scripts/render_deployment.py --check

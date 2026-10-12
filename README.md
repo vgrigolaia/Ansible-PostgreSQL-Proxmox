@@ -26,6 +26,7 @@ AlmaLinux 10 · PostgreSQL 18 · Patroni · etcd · pgbouncer · HAProxy · keep
 7. [Environments](#7-environments)
 8. [Configuration standards](#8-configuration-standards)
 9. [Documentation index](#9-documentation-index)
+10. [License](#license)
 
 ---
 
@@ -199,6 +200,7 @@ ansible.cfg                     # no default inventory (every run names its env)
 Makefile                        # deps, lint, vault-check, vault-init, vault-edit, inventory, syntax, credentials, docs
 requirements.txt                # Python packages for the workstation venv
 requirements.yml                # Ansible collections (installed into ./collections)
+LICENSE                         # MIT
 DEPLOYMENT.md                   # index: which guide to use, how they are generated
 DEPLOYMENT-<env>.md             # step-by-step deployment guide per environment (generated: make docs)
 .github/workflows/lint.yml      # CI: yamllint, ansible-lint, syntax check (never deploys)
@@ -349,3 +351,9 @@ Any conflict stops the play with nothing changed. Removing VMs is always a manua
 | [docs/diagrams/](docs/diagrams/) | Architecture diagrams: logical/traffic flow and physical/Proxmox placement (`.drawio` source + PNG) |
 | [docs/autobase-notes.md](docs/autobase-notes.md) | Design comparison with autobase |
 | `docs/prometheus/<cluster>.yml` | Scrape jobs to add to Prometheus |
+
+---
+
+## License
+
+[MIT](LICENSE): free to use, copy, modify and distribute, including commercially, as long as the copyright notice is kept. The software comes without warranty: review and test it before running it against your infrastructure.
